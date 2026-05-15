@@ -1,8 +1,7 @@
 use base::core::GridSpacing;
 use base::elements::{Aperture, ApertureKind, ThinLens};
-use base::propagation::FreeSpace;
 use base::sources::ContinuousWave;
-use base::{CoherenceState, ComplexField, OpticalElement, Source, Spectrum};
+use base::{CoherenceState, ComplexField, OpticalSystem, Spectrum, make_element};
 use dfdx::prelude::*;
 
 const NY: usize = 257;
@@ -64,7 +63,7 @@ fn print_stats(label: &str, stats: FieldStats) {
     );
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device: Cpu = Default::default();
     let shape = (NY, NX);
 
@@ -95,34 +94,41 @@ fn main() {
         spacing.dx * 1.0e6
     );
 
-    let field = source.emit(&device);
+    let mut system = OpticalSystem::new(device.clone(), source);
+    system.insert(
+        focal_length,
+        ThinLens::new(&device, shape, spacing, focal_length, wavelength),
+    )?;
+    system.insert(
+        focal_length,
+        Aperture::new(
+            &device,
+            shape,
+            spacing,
+            ApertureKind::Circular {
+                radius: aperture_radius,
+            },
+        ),
+    )?;
+    system.insert(
+        focal_length,
+        ThinLens::new(&device, shape, spacing, focal_length, wavelength),
+    )?;
+
+    println!("system: {system}");
+    for (index, element) in system.elements().iter().enumerate() {
+        println!("element {}: {}", index + 1, element);
+    }
+
+    let field = system.field_at(0)?;
     let input_stats = summarize_field(&field);
     print_stats("input plane", input_stats);
 
-    let field =
-        FreeSpace::paraxial_phase(&device, shape, spacing, focal_length, wavelength).apply(field);
-    let field = ThinLens::new(&device, shape, spacing, focal_length, wavelength).apply(field);
-    let field =
-        FreeSpace::paraxial_phase(&device, shape, spacing, focal_length, wavelength).apply(field);
-
-    let field = Aperture::new(
-        &device,
-        shape,
-        spacing,
-        ApertureKind::Circular {
-            radius: aperture_radius,
-        },
-    )
-    .apply(field);
+    let field = system.field_at(2)?;
     let aperture_stats = summarize_field(&field);
     print_stats("Fourier aperture plane", aperture_stats);
 
-    let field =
-        FreeSpace::paraxial_phase(&device, shape, spacing, focal_length, wavelength).apply(field);
-    let field = ThinLens::new(&device, shape, spacing, focal_length, wavelength).apply(field);
-    let field =
-        FreeSpace::paraxial_phase(&device, shape, spacing, focal_length, wavelength).apply(field);
-
+    let field = system.field_at_z(4.0 * focal_length)?;
     let output_stats = summarize_field(&field);
     print_stats("image plane", output_stats);
 
@@ -131,4 +137,6 @@ fn main() {
 
     assert!(output_stats.total_intensity > 0.0);
     assert!(output_stats.total_intensity < input_stats.total_intensity);
+
+    Ok(())
 }
