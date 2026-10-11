@@ -7,6 +7,11 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-11
+
+Phase 1: field representation, ASM propagation, first element, physical
+validation, documentation.
+
 ### Decisions (approved in planning check-ins, 2026-10-11)
 
 - Phased roadmap; Phase 1 = field representation + ASM propagation.
@@ -142,6 +147,22 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
      (step $\propto 1/$padding; adequate exactly at 8).
   6. Round trip $+z/-z$: Gaussian band recovers to $10^{-6}$ relative
      Frobenius norm (default padding, band-limited).
+- `docs/physics.md` (task 7): ASM derivation from the plane-wave basis
+  (textbook Eqs. 2.9, 3.5–3.13), transfer function and evanescent cutoff,
+  FFT conventions (unitary scaling, forward sign, unshifted bin order,
+  convolution-$\sqrt{N}$ scope warning), zero-padding rationale, Matsushima
+  band-limit formula (padded-width convention), $O(1)$ closed-form sampling
+  guard and mitigation, Fresnel-number regime criterion
+  $N_F = a^2/(\lambda z)$, validity regime/limitations, and the test-to-
+  analytics mapping table.
+- `docs/architecture.md` (task 7): module map and dependency direction
+  (`propagation → field`, never the reverse), `Field`/`BandField` split with
+  multiband rationale, element local-interaction contract, error taxonomy
+  table, data flow, testing strategy, Phase 2–5 roadmap hooks.
+- Crate-level docs in `src/lib.rs` with a runnable quick-start doctest
+  (mask + propagate); unit-bearing docstrings completed for all public items
+  of `common` (Angle radians newtype, `J`) and `wave` (Wavelength,
+  Polarization Jones vector, Wave accessors).
 - `CHANGELOG.md`.
 
 ### Changed
