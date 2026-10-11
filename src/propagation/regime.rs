@@ -90,15 +90,21 @@ pub fn fresnel_number(a: f64, lambda: f64, z: f64) -> f64 {
 pub struct RegimeReport {
     /// Signed distance (m).
     pub z: f64,
-    /// Conservative grid half-extents used as source extent
+    /// Conservative grid half-extents used as fallback source extent
     /// $((n_x - 1)\Delta x / 2, (n_y - 1)\Delta y / 2)$ (m).
     pub half_extent: (f64, f64),
-    /// Fresnel number from the window half-extent, $h^2/(\lambda |z|)$.
+    /// Source half-extent actually used (m): the declared aperture when
+    /// valid, else the larger grid half-extent.
+    pub extent_used: f64,
+    /// `true` when [`RegimeReport::extent_used`] came from a declared
+    /// aperture half-extent rather than the window.
+    pub extent_is_aperture: bool,
+    /// Fresnel number from the extent used, $h^2/(\lambda |z|)$.
     pub n_f: f64,
     /// `true` when $N_F \le 1$ (far field; Fraunhofer-eligible).
     pub far_field: bool,
-    /// Largest transverse angle to a window edge, $\theta \approx h / |z|$
-    /// (rad; `INFINITY` at $z = 0$).
+    /// Largest transverse angle to the source extent used,
+    /// $\theta \approx h/|z|$ (rad; `INFINITY` at $z = 0$).
     pub max_angle: f64,
     /// `true` when [`RegimeReport::max_angle`] $\le 0.1$ rad: the paraxial
     /// regime in which the Fresnel forms' binomial truncation is
@@ -118,10 +124,17 @@ impl fmt::Display for RegimeReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "regime: z={:.3e} m, half-extent=({:.3e}, {:.3e}) m, N_F={:.3} (far_field={}), \
+            "regime: z={:.3e} m, extent={:.3e} m ({}) [window half=({:.3e}, {:.3e}) m], \
+             N_F={:.3} (far_field={}), \
              theta_max={:.3} rad (paraxial={}), tf_sampled={}, kernel_sampled={} \
              -> recommend {}",
             self.z,
+            self.extent_used,
+            if self.extent_is_aperture {
+                "aperture"
+            } else {
+                "window"
+            },
             self.half_extent.0,
             self.half_extent.1,
             self.n_f,
@@ -141,18 +154,35 @@ impl fmt::Display for RegimeReport {
 ///
 /// The extent estimate is the conservative full window; when the physical
 /// aperture is known (e.g. after [`crate::element::CircularAperture`]),
-/// [`fresnel_number`] with the true radius gives a tighter $N_F$.
+/// use [`regime_report_with`] with the true half-extent — the far-field
+/// condition is a property of the source, not of the sampling window.
 pub fn regime_report(band: &BandField, z: f64) -> RegimeReport {
+    regime_report_with(band, z, None)
+}
+
+/// As [`regime_report`], with an optional true source half-extent `a`
+/// (meters, from the axis; e.g. `CircularAperture::radius()`). A valid
+/// positive finite `Some(a)` replaces the conservative window extent for
+/// $N_F$ and the paraxial angle; `None` or degenerate values fall back.
+pub fn regime_report_with(band: &BandField, z: f64, aperture: Option<f64>) -> RegimeReport {
     let (nx, ny) = band.field().dims();
     let (dx, dy) = band.field().pitch();
     let lambda = band.lambda();
     let hx = (nx as f64 - 1.0) / 2.0 * dx;
     let hy = (ny as f64 - 1.0) / 2.0 * dy;
-    let h = hx.max(hy);
+    let window = hx.max(hy);
+    let (extent, from_aperture) = match aperture.filter(|v| v.is_finite() && *v > 0.0) {
+        Some(a) => (a, true),
+        None => (window, false),
+    };
 
-    let n_f = fresnel_number(h, lambda, z);
+    let n_f = fresnel_number(extent, lambda, z);
     let far_field = n_f <= 1.0;
-    let max_angle = if z == 0.0 { f64::INFINITY } else { h / z.abs() };
+    let max_angle = if z == 0.0 {
+        f64::INFINITY
+    } else {
+        extent / z.abs()
+    };
     let paraxial = max_angle <= 0.1;
 
     let fr = fresnel::sampling_report(
@@ -181,6 +211,8 @@ pub fn regime_report(band: &BandField, z: f64) -> RegimeReport {
     RegimeReport {
         z,
         half_extent: (hx, hy),
+        extent_used: extent,
+        extent_is_aperture: from_aperture,
         n_f,
         far_field,
         max_angle,
@@ -293,5 +325,26 @@ mod tests {
         let s = format!("{rep}");
         assert!(s.contains("recommend"));
         assert!(s.contains(&rep.recommended.to_string()));
+    }
+
+    #[test]
+    fn declared_aperture_moves_the_regime_verdict() {
+        // Same geometry as `report_uses_window_extent_conservatively`:
+        // window says near field; the true 0.1 mm aperture says far.
+        let b = band(64, 1e-5);
+        let z = 0.05;
+        let win = regime_report(&b, z);
+        assert!(!win.far_field && !win.extent_is_aperture);
+        // Fine grid at z = 0.05: TF guard fails (pi*3.8), kernel guard holds
+        // (pi*0.25) -> convolution side of the complementary pair.
+        assert!(!win.tf_sampled && win.kernel_sampled);
+        assert_eq!(win.recommended, Engine::FresnelConvolution);
+        let ap = regime_report_with(&b, z, Some(1e-4));
+        assert!(ap.extent_is_aperture);
+        assert!((ap.n_f - 0.4).abs() < 1e-9);
+        assert!(ap.far_field);
+        assert_eq!(ap.recommended, Engine::Fraunhofer);
+        // Degenerate aperture falls back to the window.
+        assert_eq!(regime_report_with(&b, z, Some(f64::NAN)), win);
     }
 }

@@ -19,16 +19,19 @@
 //!
 //! The dropped Fresnel quadratic inside the integral contributes a phase
 //! error $\pi r^2/(\lambda z)$ at source radius $r$; with the conservative
-//! bound $r = D/2$ (source extent $D$ measured from the optical axis — see
-//! [`FraunhoferConfig::source_pos`] — to the farthest window-edge sample)
-//! this is $\varphi_{\max} = \pi N_F / 4$ in terms of the **Fresnel number**
+//! bound $r = h$ (the source half-extent from the axis — the declared
+//! [`FraunhoferConfig::aperture_extent`] when given, else the farthest
+//! window-edge sample) this is $\varphi_{\max} = \pi N_F$ in terms of the
+//! **Fresnel number**
 //!
-//! $$N_F = \frac{D^2}{\lambda |z|}.$$
+//! $$N_F = \frac{h^2}{\lambda |z|}.$$
 //!
-//! $N_F \lesssim 1$ is the far field (the criterion the element docs record:
-//! regime is judged at propagation time from aperture, wavelength, and
-//! distance). `strict` mode refuses to propagate when
-//! $N_F > \texttt{max\_n\_f}$ with [`FraunhoferError::RegimeViolation`]
+//! $N_F \lesssim 1$ is the far field (the criterion the element docs record
+//! and `regime::fresnel_number` implements, $N_F = a^2/(\lambda z)$ at the
+//! aperture half-width $a$): regime is judged at propagation time from
+//! aperture, wavelength, and distance. `strict` mode refuses to propagate
+//! when $N_F > \texttt{max\_n\_f}$ with
+//! [`FraunhoferError::RegimeViolation`]
 //! carrying the full report; remedies are a larger $|z|$, a smaller source
 //! window, or — if the near field is genuinely being asked for — the Fresnel
 //! or ASM engines, which are valid at any distance. `strict = false`
@@ -117,10 +120,11 @@ pub struct FraunhoferConfig {
     /// [`FraunhoferError::RegimeViolation`] instead of computing a
     /// physically invalid pattern.
     pub strict: bool,
-    /// Regime threshold on the Fresnel number $N_F = D^2/(\lambda |z|)$
-    /// ($D$ = conservative source extent measured from the axis; see
-    /// [`FraunhoferConfig::source_pos`]). Default `1.0`; tighten (e.g.
-    /// `0.1`) for quantitative far-field work.
+    /// Regime threshold on the Fresnel number $N_F = h^2/(\lambda |z|)$
+    /// ($h$ = source half-extent from the axis:
+    /// [`FraunhoferConfig::aperture_extent`] when declared, else the
+    /// conservative window extent). Default `1.0`; tighten (e.g. `0.1`)
+    /// for quantitative far-field work.
     pub max_n_f: f64,
     /// Physical position of the optical axis in field coordinates (meters).
     /// `None` places the axis at the grid origin (the default).
@@ -138,16 +142,30 @@ pub struct FraunhoferConfig {
     /// translation-invariant (functions of frequency differences or of
     /// $x - \xi$), so displaced sources propagate exactly as sampled.
     pub source_pos: Option<(f64, f64)>,
+    /// True source half-extent $a$ (meters, from the axis, applied to both
+    /// axes; use the larger half-side for rectangles — e.g.
+    /// `CircularAperture::radius()`).
+    ///
+    /// The far-field condition $N_F = a^2/(\lambda|z|) \le 1$ is a property
+    /// of the *source*, not of the sampling window: a 0.2 mm aperture in a
+    /// 20 mm window is deep in the far field at $z = 1$ m, while the
+    /// window-based estimate would conservatively claim $N_F \gg 1$ (and
+    /// reject). When `Some(a)` with positive finite $a$, the regime gate
+    /// uses it; `None` (default) falls back to the conservative window
+    /// extent (axis to farthest window edge).
+    pub aperture_extent: Option<f64>,
 }
 
 impl Default for FraunhoferConfig {
     /// Phase-2 defaults: `strict = true`, `max_n_f = 1.0`,
-    /// `source_pos = None` (axis at grid origin).
+    /// `source_pos = None` (axis at grid origin), `aperture_extent = None`
+    /// (conservative window extent).
     fn default() -> Self {
         Self {
             strict: true,
             max_n_f: 1.0,
             source_pos: None,
+            aperture_extent: None,
         }
     }
 }
@@ -169,17 +187,24 @@ pub struct FraunhoferReport {
     pub output_dims: (usize, usize),
     /// Output sample pitch `(lambda |z| / (nx dx), lambda |z| / (ny dy))` (m).
     pub output_pitch: (f64, f64),
-    /// Fresnel number along x: $(2 r_x)^2 / (\lambda |z|)$ with $r_x$ the
-    /// largest distance from the axis to a window edge sample.
+    /// Fresnel number along x: $r_x^2 / (\lambda |z|)$ with $r_x$ the
+    /// source half-extent used (declared aperture or axis-to-window edge).
     pub n_f_x: f64,
     /// As [`FraunhoferReport::n_f_x`] along y.
     pub n_f_y: f64,
     /// Optical-axis position used (meters, field coordinates; resolved from
     /// [`FraunhoferConfig::source_pos`], `(0, 0)` when `None`).
     pub source_pos: (f64, f64),
-    /// Worst dropped-quadratic phase error bound $\pi N_F^{\max}/4$ (rad):
-    /// the Fresnel curvature inside the transform integral at the window
-    /// edge farthest from the axis.
+    /// Source half-extent actually used for $N_F$ (meters): the declared
+    /// [`FraunhoferConfig::aperture_extent`] when valid, else the
+    /// conservative window extent from the axis.
+    pub extent_used: f64,
+    /// `true` when [`FraunhoferReport::extent_used`] came from
+    /// `aperture_extent` rather than the window.
+    pub extent_is_aperture: bool,
+    /// Worst dropped-quadratic phase error bound $\pi N_F$ (rad):
+    /// the Fresnel curvature inside the transform integral at the source
+    /// extent actually used.
     pub quad_phase_error_rad: f64,
     /// Configured threshold.
     pub max_n_f: f64,
@@ -192,7 +217,8 @@ impl fmt::Display for FraunhoferReport {
         write!(
             f,
             "Fraunhofer regime: lambda={:.3e} m, z={:.3e} m, grid={}x{} pitch={:.3e}x{:.3e} m \
-             -> far pitch={:.3e}x{:.3e} m, axis=({:.3e}, {:.3e}) m, N_F x={:.3} y={:.3} (max {:.3}), \
+             -> far pitch={:.3e}x{:.3e} m, axis=({:.3e}, {:.3e}) m, \
+             extent={:.3e} m ({}), N_F x={:.3} y={:.3} (max {:.3}), \
              dropped-quadratic phase bound={:.3} rad, regime_ok={}",
             self.lambda,
             self.z,
@@ -204,6 +230,12 @@ impl fmt::Display for FraunhoferReport {
             self.output_pitch.1,
             self.source_pos.0,
             self.source_pos.1,
+            self.extent_used,
+            if self.extent_is_aperture {
+                "aperture"
+            } else {
+                "window"
+            },
             self.n_f_x,
             self.n_f_y,
             self.max_n_f,
@@ -277,15 +309,21 @@ pub fn regime_report(band: &BandField, z: f64, cfg: &FraunhoferConfig) -> Fraunh
     let lambda = band.lambda();
     let az = z.abs();
     let (xs, ys) = cfg.source_pos.unwrap_or((0.0, 0.0));
-    // Conservative source extent measured from the axis: outermost window
-    // sample on each side, $r = \max(|x_{\text{edge}} - x_s|)$; the grid is
-    // origin-centered so the edges are $\mp c\Delta$ and $r = c\Delta + |s|$.
+    // Conservative source half-extent measured from the axis: outermost
+    // window sample, $r = c\Delta + |s|$; overridden by a valid declared
+    // aperture half-extent (the physically relevant source size).
     let hx = (nx as f64 - 1.0) / 2.0 * dx;
     let hy = (ny as f64 - 1.0) / 2.0 * dy;
-    let rx = hx + xs.abs();
-    let ry = hy + ys.abs();
-    let n_f_x = (2.0 * rx).powi(2) / (lambda * az);
-    let n_f_y = (2.0 * ry).powi(2) / (lambda * az);
+    let aperture = cfg.aperture_extent.filter(|v| v.is_finite() && *v > 0.0);
+    let (rx, ry, from_aperture) = match aperture {
+        Some(a) => (a, a, true),
+        None => (hx + xs.abs(), hy + ys.abs(), false),
+    };
+    let extent_used = rx.max(ry);
+    // Half-extent convention, consistent with `regime::fresnel_number`:
+    // N_F = r^2 / (lambda |z|).
+    let n_f_x = rx * rx / (lambda * az);
+    let n_f_y = ry * ry / (lambda * az);
     let n_f = n_f_x.max(n_f_y);
     FraunhoferReport {
         lambda,
@@ -300,7 +338,9 @@ pub fn regime_report(band: &BandField, z: f64, cfg: &FraunhoferConfig) -> Fraunh
         n_f_x,
         n_f_y,
         source_pos: (xs, ys),
-        quad_phase_error_rad: PI * n_f / 4.0,
+        extent_used,
+        extent_is_aperture: from_aperture,
+        quad_phase_error_rad: PI * n_f,
         max_n_f: cfg.max_n_f,
         regime_ok: n_f <= cfg.max_n_f,
     }
@@ -479,7 +519,7 @@ mod tests {
         // integral exactly the input power.
         let n = 64usize;
         let d = 1e-5;
-        let z = 2.0; // N_F = (n d)^2/(lambda z) = 4.1e-7/1e-6 = 0.41 < 1
+        let z = 2.0; // N_F = h^2/(lambda z) = (3.15e-4)^2/1e-6 = 0.099 < 1
         let band = gaussian(n, n, d, 5.0 * d);
         let rep = regime_report(&band, z, &FraunhoferConfig::default());
         assert!(rep.regime_ok);
@@ -493,7 +533,7 @@ mod tests {
         let n = 64usize;
         let d = 1e-5;
         let band = gaussian(n, n, d, 5.0 * d);
-        let z = 0.01; // N_F = 4.1e-7 / 5e-9 = 82 >> 1
+        let z = 0.01; // N_F = 9.92e-8 / 5e-9 = 19.8 >> 1
         let cfg = FraunhoferConfig::default();
         match propagate(&band, z, &cfg) {
             Err(FraunhoferError::RegimeViolation { report }) => {
@@ -510,10 +550,10 @@ mod tests {
         let out = propagate(&band, z, &loose).unwrap();
         assert_eq!(out.field().dims(), band.field().dims());
         assert!(!regime_report(&band, z, &loose).regime_ok);
-        // Threshold is configurable: N_F = 0.41 at z = 2 m fails a tightened
-        // cap of 0.2 but passes at z = 5 m (N_F = 0.164).
+        // Threshold is configurable: N_F = 0.099 at z = 2 m fails a
+        // tightened cap of 0.05 but passes at z = 5 m (N_F = 0.040).
         let tight = FraunhoferConfig {
-            max_n_f: 0.2,
+            max_n_f: 0.05,
             ..cfg
         };
         assert!(!regime_report(&band, 2.0, &tight).regime_ok);
@@ -609,7 +649,7 @@ mod tests {
         let shifted = gaussian_at(64, 64, 1e-5, 5e-5, s);
         let centered = gaussian(64, 64, 1e-5, 5e-5);
         let rep = regime_report(&shifted, z, &cfg_axis);
-        assert!(rep.regime_ok); // N_F = (2*(3.15e-4 + 1e-4))^2 / 1e-6 = 0.689
+        assert!(rep.regime_ok); // N_F = (3.15e-4 + 1e-4)^2 / 1e-6 = 0.172
         let out_s = propagate(&shifted, z, &cfg_axis).unwrap();
         let rel =
             ((out_s.field().power() - shifted.field().power()) / shifted.field().power()).abs();
@@ -622,21 +662,59 @@ mod tests {
     }
 
     #[test]
+    fn aperture_extent_declares_true_source_size() {
+        // A compact source (sigma = 20 um, content well inside a = 100 um)
+        // in a 640 um window at z = 5 cm: the conservative window gate
+        // rejects (N_F_window = 3.97), the declared aperture passes
+        // (N_F_aperture = 0.40) — the far-field condition is about the
+        // source, not the window.
+        let band = gaussian(64, 64, 1e-5, 2.0e-5);
+        let z = 0.05;
+        let win = regime_report(&band, z, &FraunhoferConfig::default());
+        assert!(!win.regime_ok && !win.extent_is_aperture);
+        assert!(matches!(
+            propagate(&band, z, &FraunhoferConfig::default()),
+            Err(FraunhoferError::RegimeViolation { .. })
+        ));
+
+        let cfg = FraunhoferConfig {
+            aperture_extent: Some(1e-4),
+            ..Default::default()
+        };
+        let rep = regime_report(&band, z, &cfg);
+        assert!(rep.regime_ok && rep.extent_is_aperture);
+        assert!((rep.extent_used - 1e-4).abs() < 1e-15);
+        assert!((rep.n_f_x - 0.4).abs() < 1e-9);
+        let out = propagate(&band, z, &cfg).unwrap();
+        assert_eq!(out.field().dims(), band.field().dims());
+
+        // Degenerate declarations fall back to the window gate.
+        let bogus = FraunhoferConfig {
+            aperture_extent: Some(0.0),
+            ..cfg
+        };
+        assert!(matches!(
+            propagate(&band, z, &bogus),
+            Err(FraunhoferError::RegimeViolation { .. })
+        ));
+    }
+
+    #[test]
     fn regime_extent_is_measured_from_the_axis() {
         // Same geometry; moving the axis toward a window edge grows the
         // conservative extent and can push N_F past the threshold.
         let band = gaussian(64, 64, 1e-5, 5e-5);
         let cfg = FraunhoferConfig {
-            max_n_f: 0.5,
+            max_n_f: 0.15,
             ..Default::default()
         };
-        assert!(regime_report(&band, 2.0, &cfg).regime_ok); // N_F = 0.397
+        assert!(regime_report(&band, 2.0, &cfg).regime_ok); // N_F = 0.099
         let off = FraunhoferConfig {
             source_pos: Some((2e-4, 0.0)),
             ..cfg
         };
         let rep = regime_report(&band, 2.0, &off);
-        assert!(!rep.regime_ok); // N_F = (2*(3.15e-4+2e-4))^2/1e-6 = 1.06
+        assert!(!rep.regime_ok); // N_F = (3.15e-4 + 2e-4)^2/1e-6 = 0.265
         assert_eq!(rep.source_pos, (2e-4, 0.0));
         assert!(matches!(
             propagate(&band, 2.0, &off),

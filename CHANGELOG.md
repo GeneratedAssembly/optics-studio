@@ -101,7 +101,7 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   unit-modulus input ramp; prefactor chirp centered at $(x_s, y_s)$;
   $N_F$ extent measured from the axis (grows with offset);
   `FraunhoferReport` carries the resolved `source_pos`.
-- Fraunhofer unit tests (9): delta-at-origin reproduces the analytic
+- Fraunhofer unit tests (10): delta-at-origin reproduces the analytic
   prefactor (flat $\Delta^2/\lambda z$ amplitude, exact quadratic phase,
   all samples); uniform window concentrates at DC with exact nulls and
   magnitude $A(n\Delta)^2/\lambda z$; far-field power equals input power to
@@ -157,7 +157,28 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   far field ($N_F \le 1 \Leftrightarrow \lambda z \ge h^2$, a factor
   $\sim n/4$ larger) — far field implies kernel-sampled, not conversely;
   corrected from the task-3 draft.
-- Regime unit tests (7): $N_F$ math + edge cases (signed $z$, $z=0 \to
+- **`FraunhoferConfig::aperture_extent: Option<f64>`** (decision point,
+  user choice 2026-10-11): the far-field condition is a property of the
+  *source*, not the sampling window — a small aperture in a large window
+  was being conservatively rejected by the window-extent gate. When given
+  (positive finite half-width from the axis, e.g.
+  `CircularAperture::radius()`), the regime gate and `FraunhoferReport`
+  use it (`extent_used`, `extent_is_aperture`); `None`/degenerate values
+  fall back to the window extent. Mirrored in `regime`: new
+  `regime_report_with(band, z, aperture)`, with `RegimeReport` gaining
+  `extent_used`/`extent_is_aperture`; `regime_report` delegates with
+  `None` (no breaking change).
+- **Fresnel-number convention unified to half-extent** $N_F = h^2/(\lambda
+  |z|)$ across `fraunhofer` and `regime` (previously the Fraunhofer gate
+  used full width $(2h)^2$, a factor-4 inconsistency with
+  `fresnel_number`); dropped-quadratic bound now stated as $\varphi_{\max}
+  = \pi N_F$ accordingly. Existing gate outcomes for the tested geometries
+  are unchanged (thresholds in tests adjusted to the convention).
+- Fraunhofer/regime tests for the new surface: declared aperture turns a
+  rejected window geometry into an accepted one with exact $N_F$;
+  degenerate declarations fall back; NaN-aperture regime equality; Display
+  prints extent source.
+- Regime unit tests (8): $N_F$ math + edge cases (signed $z$, $z=0 \to
   \infty$, invalid → NaN); far-field geometry → Fraunhofer; paraxial
   near-field → Fresnel transfer; large angle and $z=0$ → ASM; guard
   complementarity across the rule-2 crossover $\lambda z = (n-1)d^2$;
