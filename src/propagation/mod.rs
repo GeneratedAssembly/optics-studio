@@ -13,6 +13,8 @@
 //!   forms (paraxial, Phase 2).
 //! - [`fraunhofer`]: Fraunhofer far-field propagator (scaled FT with
 //!   Fresnel-number regime gate, Phase 2).
+//! - [`regime`]: regime guidance — `fresnel_number` + `regime_report`
+//!   diagnostics (Phase 2).
 //!
 //! Internal:
 //!
@@ -44,6 +46,7 @@ pub mod asm;
 mod fft;
 pub mod fraunhofer;
 pub mod fresnel;
+pub mod regime;
 
 /// Padded grid size for one axis: `ceil(n * padding)`, at least `n`.
 ///

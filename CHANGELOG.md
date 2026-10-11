@@ -140,6 +140,28 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   $+z/-z$ round trip on the periodic grid ($|H_F| = 1$), strict-mode risk /
   bypass / mitigation ladder, paraxial flag vs grid angular extent, invalid
   distance rejection.
+- Regime guidance (`src/propagation/regime.rs`, public via
+  `propagation::regime`, Phase 2 task 5) — **diagnostics only**, per the
+  approved decision (no auto-dispatch wrapper):
+  `fresnel_number(a, lambda, z) -> f64` implements the regime criterion
+  $N_F = a^2/(\lambda|z|)$ for a known aperture half-width (pairs with
+  `CircularAperture::radius()`); `regime_report(band, z) -> RegimeReport`
+  conservatively assesses a whole grid (window half-extent) and exposes
+  $N_F$, far-field flag, paraxial angle ($\theta = h/|z| \le 0.1$), both
+  Fresnel guards (`tf_sampled`, `kernel_sampled`), and an
+  `Engine::{Asm, FresnelTransfer, FresnelConvolution, Fraunhofer}`
+  recommendation via a documented ladder: non-paraxial → ASM (exact);
+  $N_F \le 1$ → Fraunhofer (cheapest valid); else the Fresnel form whose
+  guard holds; fallback ASM. Display prints all criteria.
+  Note: the rule-2 kernel guard ($\lambda z > (n-1)d^2$) is weaker than
+  far field ($N_F \le 1 \Leftrightarrow \lambda z \ge h^2$, a factor
+  $\sim n/4$ larger) — far field implies kernel-sampled, not conversely;
+  corrected from the task-3 draft.
+- Regime unit tests (7): $N_F$ math + edge cases (signed $z$, $z=0 \to
+  \infty$, invalid → NaN); far-field geometry → Fraunhofer; paraxial
+  near-field → Fresnel transfer; large angle and $z=0$ → ASM; guard
+  complementarity across the rule-2 crossover $\lambda z = (n-1)d^2$;
+  window-vs-aperture conservatism; Display roundtrip.
 
 ### Changed
 
