@@ -122,6 +122,26 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   diagnostics, boundary-inclusive mask geometry, power reduction = area ratio
   ($\pi a^2 / WH$) for uniform input, phase-ramp preservation on tilted plane
   waves, `dyn Element` dispatch (trait-object safety), grid half-extent math.
+- Physical validation suite (`tests/asm.rs`, task 6) — six integration tests
+  of the ASM propagator against textbook analytics, all passing:
+  1. Energy conservation: compact Gaussian, default config, relative power
+     change $\le 10^{-9}$ (window half-extent = 8.5 sigma so crop/band-clip
+     loss is negligible).
+  2. Plane-wave invariance (`padding = 1.0`, periodic grid): intensity flat,
+     global phase $= kz \pmod{2\pi}$ to $10^{-6}$.
+  3. Tilted plane wave: exact-DFT-bin tilt ($\alpha = m\lambda/L_x$), phase
+     ramp slope $k\alpha$ preserved after propagation to $10^{-6}$.
+  4. Airy far field: hard-edge circular aperture ($a = 1$ mm) at $N_F = a^2/(\lambda z) = 0.05 \ll 1$
+     (Fraunhofer regime per the task-5 decision); ring-averaged profile vs
+     $[2J_1(v)/v]^2$ within 2% of peak to $r = 12.6$ mm, first zero at
+     $1.22\lambda z/(2a)$ within 2%. $J_1$ computed by Simpson integration of
+     its standard integral in-test (no special-functions dependency added).
+  5. Sampling guard: closed-form step ~19 rad > $\pi$ scenario ->
+     `AliasingRisk` with mitigation disabled, `strict = false` proceeds with
+     flagged report, `max_padding = 8.0` succeeds via automatic densification
+     (step $\propto 1/$padding; adequate exactly at 8).
+  6. Round trip $+z/-z$: Gaussian band recovers to $10^{-6}$ relative
+     Frobenius norm (default padding, band-limited).
 - `CHANGELOG.md`.
 
 ### Changed
