@@ -1,17 +1,17 @@
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 use std::ops::{Add, Deref, Sub};
 
-use num_complex::Complex32;
+use num_complex::Complex64;
 
-pub const J: Complex32 = Complex32::I;
+pub const J: Complex64 = Complex64::I;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Angle {
-    radians: f32,
+    radians: f64,
 }
 
 impl Angle {
-    pub fn new(radians: f32) -> Self {
+    pub fn new(radians: f64) -> Self {
         Self { radians }
     }
 
@@ -35,34 +35,34 @@ impl Angle {
         Angle::pi()
     }
 
-    pub fn from_pi(radians: f32) -> Self {
+    pub fn from_pi(radians: f64) -> Self {
         Angle::pi() + Angle::new(radians)
     }
 
-    pub fn from_pi_half(radians: f32) -> Self {
+    pub fn from_pi_half(radians: f64) -> Self {
         Angle::pi_half() + Angle::new(radians)
     }
 
-    pub fn from_90(degrees: f32) -> Self {
+    pub fn from_90(degrees: f64) -> Self {
         Angle::pi_half() + Angle::from_degrees(degrees)
     }
 
-    pub fn from_180(degrees: f32) -> Self {
+    pub fn from_180(degrees: f64) -> Self {
         Angle::pi() + Angle::from_degrees(degrees)
     }
 
-    pub fn from_degrees(degrees: f32) -> Self {
+    pub fn from_degrees(degrees: f64) -> Self {
         let radians = PI / 180.0 * degrees;
         Self { radians }
     }
 
-    pub fn degrees(&self) -> f32 {
+    pub fn degrees(&self) -> f64 {
         180.0 / PI * self.radians
     }
 }
 
 impl Deref for Angle {
-    type Target = f32;
+    type Target = f64;
 
     fn deref(&self) -> &Self::Target {
         &self.radians

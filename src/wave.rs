@@ -1,41 +1,41 @@
-use num_complex::Complex32;
+use num_complex::Complex64;
 
 use crate::common::{Angle, J};
 
 /// Wavelength, stored in SI meters; constructed from nanometers.
 #[derive(Copy, Clone, Debug)]
 pub struct Wavelength {
-    value: f32, // Stored in meters
+    value: f64, // Stored in meters
 }
 
 impl Wavelength {
     pub fn new(nanometers: u32) -> Self {
         Self {
-            value: nanometers as f32 * 1e-9, // u32 to f32 is safe - no loss of precision
+            value: nanometers as f64 * 1e-9, // u32 to f64 is safe - no loss of precision
         }
     }
 
-    pub fn as_meters(&self) -> f32 {
+    pub fn as_meters(&self) -> f64 {
         self.value
     }
 
-    pub fn as_nanometers(&self) -> f32 {
+    pub fn as_nanometers(&self) -> f64 {
         self.value * 1e9
     }
 }
 
 #[derive(Copy, Clone, Debug)]
 pub struct Polarization {
-    ex: Complex32,
-    ey: Complex32,
+    ex: Complex64,
+    ey: Complex64,
 }
 
 impl Polarization {
     /// Linear polarization oriented at `angle` in the transverse plane.
     pub fn linear(angle: Angle) -> Self {
         Self {
-            ex: Complex32::from(angle.cos()),
-            ey: Complex32::from(angle.sin()),
+            ex: Complex64::from(angle.cos()),
+            ey: Complex64::from(angle.sin()),
         }
     }
 
@@ -50,15 +50,15 @@ impl Polarization {
     /// Circular polarization; `left_handed` selects the handedness.
     pub fn circular(left_handed: bool) -> Self {
         let sign = if left_handed { J } else { -J };
-        let norm = (2.0_f32).sqrt();
+        let norm = (2.0_f64).sqrt();
         Polarization {
-            ex: Complex32::new(1.0 / norm, 0.0),
+            ex: Complex64::new(1.0 / norm, 0.0),
             ey: sign / norm,
         }
     }
 
     /// General elliptical polarization from a Jones vector (ex, ey).
-    pub fn elliptical(ex: Complex32, ey: Complex32) -> Self {
+    pub fn elliptical(ex: Complex64, ey: Complex64) -> Self {
         let norm = (ex.norm_sqr() + ey.norm_sqr()).sqrt();
         if norm > 0.0 {
             Polarization {
@@ -67,24 +67,24 @@ impl Polarization {
             }
         } else {
             Polarization {
-                ex: Complex32::new(1.0, 0.0),
-                ey: Complex32::new(0.0, 0.0),
+                ex: Complex64::new(1.0, 0.0),
+                ey: Complex64::new(0.0, 0.0),
             }
         }
     }
 
-    pub fn ex(&self) -> Complex32 {
+    pub fn ex(&self) -> Complex64 {
         self.ex
     }
 
-    pub fn ey(&self) -> Complex32 {
+    pub fn ey(&self) -> Complex64 {
         self.ey
     }
 }
 
 pub struct Wave {
     wavelength: Wavelength,
-    amplitude: f32,
+    amplitude: f64,
     phase: Angle, // radians
     /// `None` for unpolarized light.
     polarization: Option<Polarization>,
@@ -93,7 +93,7 @@ pub struct Wave {
 impl Wave {
     pub fn new(
         wavelength: Wavelength,
-        amplitude: f32,
+        amplitude: f64,
         phase: Angle,
         polarization: Option<Polarization>,
     ) -> Self {
@@ -109,7 +109,7 @@ impl Wave {
         self.wavelength
     }
 
-    pub fn amplitude(&self) -> f32 {
+    pub fn amplitude(&self) -> f64 {
         self.amplitude
     }
 
