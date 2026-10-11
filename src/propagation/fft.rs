@@ -118,6 +118,8 @@ pub(crate) fn fftfreq(n: usize, d: f64) -> Vec<f64> {
 
 /// Frequency axis in ascending `fftshift` order (zero frequency at the center
 /// sample for odd `n`, just right of center for even `n`).
+// Consumed by spectrum reporting/visualization paths (Phase 1+ public surface); intentionally unused by the ASM transfer function, which works in unshifted bin order.
+#[allow(dead_code)]
 pub(crate) fn fftfreq_shifted(n: usize, d: f64) -> Vec<f64> {
     let half = n / 2; // floor; shifted order starts at k = -half
     (0..n)
@@ -127,6 +129,8 @@ pub(crate) fn fftfreq_shifted(n: usize, d: f64) -> Vec<f64> {
 
 /// NumPy-`fftshift` semantics on a 1D slice: roll right by `n / 2` (floor),
 /// moving index 0 (DC bin) to the center.
+// Consumed by spectrum reporting/visualization paths (Phase 1+ public surface); intentionally unused by the ASM transfer function, which works in unshifted bin order.
+#[allow(dead_code)]
 pub(crate) fn fftshift1d(v: &[Complex64]) -> Vec<Complex64> {
     let n = v.len();
     let s = n / 2;
@@ -134,6 +138,8 @@ pub(crate) fn fftshift1d(v: &[Complex64]) -> Vec<Complex64> {
 }
 
 /// Exact inverse of [`fftshift1d`] (identical to it for even `n`).
+// Consumed by spectrum reporting/visualization paths (Phase 1+ public surface); intentionally unused by the ASM transfer function, which works in unshifted bin order.
+#[allow(dead_code)]
 pub(crate) fn ifftshift1d(v: &[Complex64]) -> Vec<Complex64> {
     let n = v.len();
     let s = n / 2;
@@ -141,11 +147,15 @@ pub(crate) fn ifftshift1d(v: &[Complex64]) -> Vec<Complex64> {
 }
 
 /// [`fftshift1d`] applied along both axes of a row-major `nx` x `ny` buffer.
+// Consumed by spectrum reporting/visualization paths (Phase 1+ public surface); intentionally unused by the ASM transfer function, which works in unshifted bin order.
+#[allow(dead_code)]
 pub(crate) fn fftshift2(buf: &[Complex64], nx: usize, ny: usize) -> Vec<Complex64> {
     shift2(buf, nx, ny, false)
 }
 
 /// [`ifftshift1d`] applied along both axes of a row-major `nx` x `ny` buffer.
+// Consumed by spectrum reporting/visualization paths (Phase 1+ public surface); intentionally unused by the ASM transfer function, which works in unshifted bin order.
+#[allow(dead_code)]
 pub(crate) fn ifftshift2(buf: &[Complex64], nx: usize, ny: usize) -> Vec<Complex64> {
     shift2(buf, nx, ny, true)
 }
