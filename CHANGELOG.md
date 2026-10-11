@@ -37,6 +37,16 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   (propagate $+z$ then $-z$). Implemented: `InvalidDistance` fires only for
   non-finite $z$; $z = 0$ is the identity; negative $z$ back-propagates
   ($H(f, -z) = H(f, z)^*$).
+- **Element interaction is local; regime judgment lives in propagation**
+  (task 5 check-in, 2026-10-11): `Element::apply(&BandField) ->
+  Result<BandField, OpticsError>` replaces `transform(&Wave, angle)`
+  (breaking; oblique interaction deferred). Whether the pattern downstream of
+  an aperture of radius $a$ is Fresnel or Fraunhofer at distance $z$ is judged
+  by the **Fresnel number** $N_F = a^2 / (\lambda z)$ ($N_F \gg 1$ near field,
+  $N_F \lesssim 1$ far field) — a propagation decision combining aperture,
+  wavelength, and inter-element distance. ASM is regime-agnostic; Phase 2+
+  Fresnel/Fraunhofer propagators must expose/consume $N_F$ (recorded in
+  `element` module docs for regime guidance).
 
 ### Added
 
@@ -94,6 +104,24 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   strict-mode `AliasingRisk` when mitigation is disabled (`max_padding = 1.0`)
   and strict-mode automatic mitigation succeeding by densification
   (`padding 1 → 8`, band-limiting off).
+- `Element` trait now operates on fields (task 5, `src/element.rs`):
+  `apply(&self, band: &BandField) -> Result<BandField, OpticsError>` — a local
+  transformation of the sampled plane (grid geometry and wavelength
+  preserved); propagation and Fresnel/Fraunhofer regime judgment remain in
+  `crate::propagation`. Module docs record the regime criterion
+  $N_F = a^2/(\lambda z)$.
+- `OpticsError` (thiserror, `src/element.rs`): `InvalidAperture` (degenerate
+  element geometry) and `OutsideField { radius, center, half-extents }`
+  (element footprint exceeds the field grid; carries diagnostics).
+- `CircularAperture { radius, center }` (meters, `src/element.rs`): ideal
+  hard-edge binary amplitude mask $t = 1$ inside the circle (boundary
+  inclusive), $0$ outside; `new` validates geometry; implements `Element`
+  (`shape` = `Circle`, `kind` = `Aperture`, `extent` = `Aperture(radius)`,
+  placeholder non-absorbing `material` metadata unused by the Phase-1 mask).
+- Element unit tests: constructor validation, `OutsideField` rejection with
+  diagnostics, boundary-inclusive mask geometry, power reduction = area ratio
+  ($\pi a^2 / WH$) for uniform input, phase-ramp preservation on tilted plane
+  waves, `dyn Element` dispatch (trait-object safety), grid half-extent math.
 - `CHANGELOG.md`.
 
 ### Changed
@@ -102,3 +130,7 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   and `element` (`Angle` derefs to `f64`, `J: Complex64`, `Material` closures
   `(f64, f64) -> f64`, `Extent`/`ElementShape::Poly` to `f64`). No behavior
   change.
+- **Breaking (task 5):** removed `Element::transform(&Wave, angle) ->
+  Option<Wave>` in favor of `Element::apply(&BandField)` (see Added). The
+  angle parameter (oblique interaction) is deferred; `Wave` is now documented
+  as a scalar source/beam parameter record only, not an element operand.

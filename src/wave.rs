@@ -82,6 +82,15 @@ impl Polarization {
     }
 }
 
+/// Scalar source/beam parameter record: wavelength, amplitude, phase, and
+/// polarization describing a idealized beam *before* it is sampled onto a
+/// grid.
+///
+/// `Wave` is not a field type — elements and propagators operate on
+/// [`crate::field::BandField`] grids. Field initializers that build a
+/// [`crate::field::Field`] from a `Wave` arrive with the source library
+/// (Phase 5); vector/polarized field grids remain out of scope for now
+/// (`Polarization` stays a `Wave`-level property).
 pub struct Wave {
     wavelength: Wavelength,
     amplitude: f64,
