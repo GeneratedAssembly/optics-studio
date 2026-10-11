@@ -167,7 +167,16 @@ impl fmt::Display for SamplingReport {
             self.max_phase_step_x,
             self.max_phase_step_y,
             self.nyquist_ok,
-        )
+        )?;
+        if !self.nyquist_ok {
+            write!(
+                f,
+                " | hint: transfer function undersampled — remedy: larger field \
+                 (raise padding / max_padding to densify frequency sampling), \
+                 coarsen pitch, or reduce |z|"
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -196,8 +205,9 @@ pub enum PropagationError {
     /// deliberately.
     #[error("sampling criteria not met: {report}")]
     AliasingRisk {
-        /// Diagnostics describing exactly which criterion failed.
-        report: SamplingReport,
+        /// Diagnostics describing exactly which criterion failed. Boxed to
+        /// keep the `Result` error arm small (review decision 2026-10-11).
+        report: Box<SamplingReport>,
     },
 }
 
@@ -413,7 +423,9 @@ pub fn propagate(band: &BandField, z: f64, cfg: &AsmConfig) -> Result<BandField,
             report = analyze(band, z, cfg, padding);
         }
         if !report.nyquist_ok {
-            return Err(PropagationError::AliasingRisk { report });
+            return Err(PropagationError::AliasingRisk {
+                report: Box::new(report),
+            });
         }
     }
 

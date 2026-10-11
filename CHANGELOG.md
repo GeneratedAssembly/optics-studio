@@ -29,6 +29,44 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- Fresnel **convolution (impulse-response) propagator**
+  (`fresnel::propagate_convolution`, Phase 2 task 3): paraxial Green's
+  function $h = \frac{e^{ikz}}{i\lambda z}\exp\!\big(i\pi\frac{x^2+y^2}{\lambda z}\big)$
+  (textbook Eq. 2.24 kernel, obliquity factor reduced; Sec. 2.2.2 + Ch. 3:
+  shift-invariant propagation = spatial convolution) sampled on the padded
+  grid in DFT order (kernel origin at bin (0,0)) with the $\Delta x\Delta y$
+  quadrature weight folded in; evaluated as
+  $\text{ifft2}(\text{fft2}(u)\cdot\text{fft2}(h))$ — the first consumer of
+  the exact convolution theorem from the task-1 NumPy scaling migration.
+  Same embed/pad/extract pipeline, config, and error type as the TF form.
+- **Reciprocal kernel-sampling guard**, expressed in the textbook direction
+  (review 2026-10-11): worst adjacent-sample chirp step
+  $\pi(n_{\text{pad}}-1)\Delta x^2/(\lambda|z|) < \pi$, i.e.
+  $n_{\text{pad}}\Delta x^2 \lesssim \lambda z$ — textbook rule (2)
+  $N > D^2/(Z\lambda)$ verbatim at the padded width. The convolution form is
+  at home for **long $z$ / fine grids**, the TF form for **short $z$ /
+  coarse grids** (negation of rule 2), crossing at critical sampling
+  $n_{\text{pad}}\Delta x^2 = \lambda z$. (Corrects an inverted regime
+  statement in the task-2/3 draft docs.) Densification cannot mitigate an
+  undersampled kernel, so `strict` mode raises `AliasingRisk` immediately
+  (no mitigation loop); the crossover feeds the task-5 regime guidance.
+  `FresnelSamplingReport` now carries both criteria
+  (`max_kernel_step_x/y`, `kernel_nyquist_ok`).
+- **AliasingRisk reports boxed** (review 2026-10-11): `Box<SamplingReport>`
+  in `asm::PropagationError` and `Box<FresnelSamplingReport>` in
+  `FresnelError` — consistent API, small `Result::Err` arm (breaking for
+  pattern-matchers that moved the payload; deref-transparent for field
+  reads).
+- **Remedy hints in report `Display`** (review 2026-10-11): undersampled TF
+  → "larger field (raise padding/max_padding), coarsen pitch, or reduce
+  |z|"; undersampled kernel → "padding worsens this — smaller kernel
+  extent, coarsen pitch, or increase |z|".
+- Convolution unit tests (5): delta input reproduces the sampled kernel in
+  absolute amplitude ($\Delta^2/\lambda z$), phase, and flatness; guard
+  complementarity demonstrated in one geometry (strict convolution OK where
+  strict TF fails at `max_padding = 1.0`, TF recovered by densification);
+  TF-vs-convolution agreement $< 10^{-6}$ at critical sampling on a compact
+  Gaussian; $z = 0$ identity; shared validation rejection.
 - Fresnel transfer-function propagator (`src/propagation/fresnel.rs`, public
   via `propagation::fresnel`, Phase 2 task 2): paraxial form of the ASM
   transfer function, $H_F = e^{ikz}\exp\!\big(-i\pi\lambda z(f_x^2+f_y^2)\big)$
@@ -62,6 +100,8 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- `fresnel`: engine-boundary validation extracted into a shared private
+  `validate()` used by both propagator forms (task 3; internal).
 - `src/propagation/mod.rs`: `padded_len` hoisted to a shared `pub(crate)`
   helper of the propagation module (was private to `asm`) so all
   transfer-function engines use one padding policy; no behavior change.
