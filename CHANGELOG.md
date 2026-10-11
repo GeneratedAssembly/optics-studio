@@ -26,6 +26,18 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   Fraunhofer, cross-model consistency).
 - **Pre-commit check-in mandatory** (agents.md update, commit `be2cb30`):
   explicit approval before every commit; Conventional Commits enforced.
+- **Off-axis modeling via `FraunhoferConfig::source_pos`** (review
+  2026-10-11): the optical axis must not be implicitly tied to the grid
+  center. Audit result: ASM and Fresnel (both forms) are translation-
+  invariant — diagonal-in-frequency operators / kernels of the difference
+  $(x - \xi)$ — so they need no parameter (documented in their module
+  docs); Fraunhofer's prefactor chirp and frequency map ARE axis-centered,
+  so `source_pos: Option<(f64, f64)>` (meters, field coordinates; `None` =
+  origin) was added: an exact unit-modulus input ramp $e^{i2\pi(f_s \xi +
+  g_s \eta)}$, $f_s = x_s/(\lambda z)$, re-centers the evaluated frequency
+  grid on the axis (no interpolation), the chirp is taken about
+  $(x_s, y_s)$, and the regime gate's conservative extent $N_F$ is measured
+  from the axis to the farthest window edge.
 
 ### Added
 
@@ -67,6 +79,37 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   strict TF fails at `max_padding = 1.0`, TF recovered by densification);
   TF-vs-convolution agreement $< 10^{-6}$ at critical sampling on a compact
   Gaussian; $z = 0$ identity; shared validation rejection.
+- Fraunhofer far-field propagator (`src/propagation/fraunhofer.rs`, public
+  via `propagation::fraunhofer`, Phase 2 task 4):
+  $U = \frac{e^{ikz}}{i\lambda z} e^{i\pi r^2/\lambda z}\,
+  \widetilde{U}_0(x/\lambda z, y/\lambda z)$ (textbook Sec. 2.2, Eq. 2.19;
+  assumption 9). The **only propagator that resamples**: output grid pitch
+  $\lambda|z|/(n\Delta)$, extent $\lambda|z|/\Delta$, dims preserved;
+  negative $z$ mirrors the pattern; $z = 0$ rejected (singular map).
+  Exact bin-to-origin-centered-grid alignment via an offset DFT
+  (unit-modulus pre/post phase factors implementing a $c=(n-1)/2$-bin
+  shift) — no half-pixel error on even grids, no odd-$n$ restriction.
+- **Fraunhofer regime gate = the Fresnel number**: $N_F = D^2/(\lambda|z|)$
+  over the source window, with the dropped-quadratic phase bound
+  $\pi N_F/4$ reported; `strict` mode refuses $N_F >$ `max_n_f`
+  (default 1.0) with `RegimeViolation { report: Box<FraunhoferReport> }`
+  and Display remedy hints (larger |z|, smaller window, or Fresnel/ASM);
+  `FraunhoferConfig { strict, max_n_f }`.
+- **Off-axis axis reference `FraunhoferConfig::source_pos`** (review):
+  `Option<(f64, f64)>`, meters, field coordinates, `None` = grid origin.
+  Frequency map $f = (X - x_s)/(\lambda z)$ realized exactly by a
+  unit-modulus input ramp; prefactor chirp centered at $(x_s, y_s)$;
+  $N_F$ extent measured from the axis (grows with offset);
+  `FraunhoferReport` carries the resolved `source_pos`.
+- Fraunhofer unit tests (9): delta-at-origin reproduces the analytic
+  prefactor (flat $\Delta^2/\lambda z$ amplitude, exact quadratic phase,
+  all samples); uniform window concentrates at DC with exact nulls and
+  magnitude $A(n\Delta)^2/\lambda z$; far-field power equals input power to
+  $10^{-9}$ (discrete Parseval through the offset DFT); regime gate +
+  non-strict bypass + configurable threshold; $-z$ mirror symmetry;
+  $z=0$/non-finite rejection; `None` equals explicit-origin axis; off-axis
+  propagation conserves power (ramp is unit-modulus, bin map bijective);
+  regime extent grows with axis offset.
 - Fresnel transfer-function propagator (`src/propagation/fresnel.rs`, public
   via `propagation::fresnel`, Phase 2 task 2): paraxial form of the ASM
   transfer function, $H_F = e^{ikz}\exp\!\big(-i\pi\lambda z(f_x^2+f_y^2)\big)$

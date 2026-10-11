@@ -9,7 +9,10 @@
 //! Public API:
 //!
 //! - [`asm`]: Angular Spectrum Method propagator (exact, Phase 1).
-//! - [`fresnel`]: Fresnel transfer-function propagator (paraxial, Phase 2).
+//! - [`fresnel`]: Fresnel propagator, transfer-function and convolution
+//!   forms (paraxial, Phase 2).
+//! - [`fraunhofer`]: Fraunhofer far-field propagator (scaled FT with
+//!   Fresnel-number regime gate, Phase 2).
 //!
 //! Internal:
 //!
@@ -39,6 +42,7 @@
 
 pub mod asm;
 mod fft;
+pub mod fraunhofer;
 pub mod fresnel;
 
 /// Padded grid size for one axis: `ceil(n * padding)`, at least `n`.

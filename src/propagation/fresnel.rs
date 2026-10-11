@@ -76,6 +76,13 @@
 //! pitch, or longer $|z|$), so `strict` mode raises
 //! [`FresnelError::AliasingRisk`] immediately for the convolution form; the
 //! crossover is surfaced by the Phase-2 regime-guidance task.
+//!
+//! **Translation invariance.** Both forms carry no transverse-origin
+//! assumption — the TF form is diagonal in frequency, and the convolution
+//! kernel $h$ depends only on the difference $(x - \xi)$ — so off-axis
+//! sources propagate exactly as sampled, with no source-position parameter.
+//! Among the Phase-2 engines, only the Fraunhofer prefactor references the
+//! optical axis ([`super::fraunhofer::FraunhoferConfig::source_pos`]).
 
 use std::f64::consts::PI;
 use std::fmt;

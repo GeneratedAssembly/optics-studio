@@ -57,6 +57,12 @@
 //! pitch still concentrates energy near low frequencies; no Fresnel
 //! approximation is made. Negative $z$ back-propagates; $z = 0$ is the
 //! identity.
+//!
+//! **Translation invariance.** The ASM operator is diagonal in frequency and
+//! carries no notion of a transverse origin: laterally displaced (off-axis)
+//! sources propagate exactly as sampled, with no source-position parameter.
+//! Among the Phase-2 engines, only the Fraunhofer prefactor references the
+//! optical axis (see [`super::fraunhofer::FraunhoferConfig::source_pos`]).
 
 use std::f64::consts::PI;
 use std::fmt;
