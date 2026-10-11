@@ -17,6 +17,10 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   default; `AsmConfig` extensible for future boundary-condition strategies
   (infrastructure only in Phase 1).
 - Errors: plain enums with manual `Display`/`Error` impls (no `thiserror`).
+  **Superseded 2026-10-11 (task 3.a check-in):** error enums now derive
+  `Display`/`Error` via **thiserror** v2 — the extra dependency is accepted for
+  API cleanliness; applies to all future error types (`PropagationError`,
+  `OpticsError`).
 - **FFT normalization: orthonormal (unitary) scaling for Phase 1** (check-in
   2026-10-11). Unitary scaling conserves total (sum) energy and is exact for
   ASM transfer-function multiplication. Flagged for Phase 2+: convolution-form
@@ -55,7 +59,7 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 - FFT unit tests: round-trip identity (even/odd sizes incl. 1×N), Parseval
   energy conservation, delta → flat spectrum, plane-wave bin/sign convention,
   `fftfreq` and shift semantics vs NumPy.
-- Dependency: `rustfft = "6"`.
+- Dependencies: `rustfft = "6"`, `thiserror = "2"` (error derive).
 - `CHANGELOG.md`.
 
 ### Changed

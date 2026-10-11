@@ -33,19 +33,21 @@
 //! proportional to irradiance.
 
 use std::f64::consts::PI;
-use std::fmt;
 
 use num_complex::Complex64;
+use thiserror::Error;
 
 /// Errors produced when constructing or validating a [`Field`] or [`BandField`].
 ///
 /// A deliberate, minimal taxonomy: every variant corresponds to a grid or band
 /// that cannot physically or numerically represent a sampled wavefront.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum FieldError {
     /// `nx` or `ny` was zero; a field must contain at least one sample.
+    #[error("field grid is empty (nx and ny must be > 0)")]
     EmptyGrid,
     /// The flat sample buffer length does not equal `nx * ny`.
+    #[error("sample buffer length {len} does not match grid size {expected} (nx * ny)")]
     DimensionMismatch {
         /// Number of samples provided.
         len: usize,
@@ -53,6 +55,7 @@ pub enum FieldError {
         expected: usize,
     },
     /// A sample pitch (`dx` or `dy`) was not strictly positive and finite.
+    #[error("sample pitch must be positive and finite (got dx = {dx} m, dy = {dy} m)")]
     NonPositivePitch {
         /// x-axis sample pitch in meters.
         dx: f64,
@@ -60,32 +63,12 @@ pub enum FieldError {
         dy: f64,
     },
     /// Wavelength was not strictly positive and finite (meters).
+    #[error("wavelength must be positive and finite (got {0} m)")]
     NonPositiveWavelength(f64),
     /// At least one complex sample had a non-finite real or imaginary part.
+    #[error("field contains a non-finite sample")]
     NonFiniteSample,
 }
-
-impl fmt::Display for FieldError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FieldError::EmptyGrid => write!(f, "field grid is empty (nx and ny must be > 0)"),
-            FieldError::DimensionMismatch { len, expected } => write!(
-                f,
-                "sample buffer length {len} does not match grid size {expected} (nx * ny)"
-            ),
-            FieldError::NonPositivePitch { dx, dy } => write!(
-                f,
-                "sample pitch must be positive and finite (got dx = {dx} m, dy = {dy} m)"
-            ),
-            FieldError::NonPositiveWavelength(lambda) => {
-                write!(f, "wavelength must be positive and finite (got {lambda} m)")
-            }
-            FieldError::NonFiniteSample => write!(f, "field contains a non-finite sample"),
-        }
-    }
-}
-
-impl std::error::Error for FieldError {}
 
 fn valid_pitch(p: f64) -> bool {
     p.is_finite() && p > 0.0
