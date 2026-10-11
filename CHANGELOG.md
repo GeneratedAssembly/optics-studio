@@ -27,8 +27,44 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 - **Pre-commit check-in mandatory** (agents.md update, commit `be2cb30`):
   explicit approval before every commit; Conventional Commits enforced.
 
+### Added
+
+- Fresnel transfer-function propagator (`src/propagation/fresnel.rs`, public
+  via `propagation::fresnel`, Phase 2 task 2): paraxial form of the ASM
+  transfer function, $H_F = e^{ikz}\exp\!\big(-i\pi\lambda z(f_x^2+f_y^2)\big)$
+  (binomial expansion of the direction cosine; textbook Sec. 2.1–2.2), same
+  FFT-diagonal structure and embed/pad/extract pipeline as ASM. API mirrors
+  `asm`: `propagate(&BandField, z, &FresnelConfig)` and
+  `sampling_report(&BandField, z, &FresnelConfig)`.
+  `FresnelConfig { padding, strict, max_padding }` (defaults 2.0/true/8.0;
+  no band-limit knob — the Matsushima mask is ASM-specific).
+  `FresnelError` mirrors the propagation taxonomy with a
+  `FresnelSamplingReport` payload (unification into one engine-level error
+  type flagged as a later API decision).
+- **Fresnel sampling guard = textbook Sec. 2.2 rules 2–3**: the worst
+  adjacent-bin chirp step is closed-form and *exact* (separable quadratic:
+  $\pi\lambda|z|\,\delta f\,(2f_{\text{nyq}} - \delta f)$ at the
+  Nyquist-straddling bin pair); requiring it $< \pi$ is algebraically
+  equivalent to $N > \lambda z/\Delta x^2$. Pinned by a brute-force
+  sweep-equality unit test. Strict mode mitigates by densification
+  (1 → 2 → 4 → 8) before `AliasingRisk`.
+- **Paraxial validity diagnostic** on the report:
+  `max_phase_error_vs_asm` (worst binomial-truncation error
+  $k|z|\,(1 - s/2 - \sqrt{1-s})$ at the grid-corner bin vs the exact ASM
+  root) with `paraxial_ok` flag (< 0.01 rad) — the Fresnel model has no
+  evanescent cutoff, so validity is reported, not enforced.
+- Fresnel unit tests (9): config defaults, $H_F$ vs $H_{ASM}$ low-frequency
+  agreement at the $O(kz\,s^2/8)$ rate, closed-form step = exact sweep
+  maximum, $z=0$ identity, plane-wave-bin quadratic phase law, exact
+  $+z/-z$ round trip on the periodic grid ($|H_F| = 1$), strict-mode risk /
+  bypass / mitigation ladder, paraxial flag vs grid angular extent, invalid
+  distance rejection.
+
 ### Changed
 
+- `src/propagation/mod.rs`: `padded_len` hoisted to a shared `pub(crate)`
+  helper of the propagation module (was private to `asm`) so all
+  transfer-function engines use one padding policy; no behavior change.
 - `src/propagation/fft.rs`: `fft2` is now unnormalized and `ifft2` divides by
   $N$ (was: $1/\sqrt{N}$ per axis in both directions). Propagator outputs are
   mathematically identical (factors cancel in transfer-function form);

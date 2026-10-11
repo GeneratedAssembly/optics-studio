@@ -65,6 +65,7 @@ use num_complex::Complex64;
 use thiserror::Error;
 
 use super::fft::{fft2, fftfreq, ifft2};
+use super::padded_len;
 use crate::field::{BandField, Field};
 
 /// Tuning knobs for [`propagate`].
@@ -214,14 +215,8 @@ fn axis_band_limit(lambda: f64, z: f64, grid_width: f64, band_limited: bool) -> 
     }
 }
 
-/// Padded grid size for one axis: `ceil(n * padding)`, at least `n`.
-fn padded_len(n: usize, padding: f64) -> usize {
-    if padding <= 1.0 {
-        n
-    } else {
-        ((n as f64) * padding).ceil() as usize
-    }
-}
+// `padded_len` lives in `super` so all transfer-function engines share the
+// padding policy.
 
 /// Transfer function value at frequency `(fx, fy)` for wavelength `lambda`,
 /// distance `z`; returns `None` for masked (zero) components.
@@ -397,6 +392,10 @@ pub fn propagate(band: &BandField, z: f64, cfg: &AsmConfig) -> Result<BandField,
     if nx == 0 || ny == 0 {
         return Err(PropagationError::EmptyGrid);
     }
+    // Defensive boundary re-validation: constructors enforce the invariants,
+    // but `field_mut()` is public, so the engine re-checks rather than
+    // trusting caller-side mutation (see `fresnel::propagate` for the full
+    // rationale).
     if field.samples().iter().any(|s| !s.is_finite()) {
         return Err(PropagationError::NonFiniteSample);
     }
@@ -423,7 +422,13 @@ pub fn propagate(band: &BandField, z: f64, cfg: &AsmConfig) -> Result<BandField,
     let ox = (nx_pad - nx) / 2;
     let oy = (ny_pad - ny) / 2;
 
-    // Embed the centered input window into the centered padded grid.
+    // Embed the centered input window into the centered padded grid,
+    // surroundings zeroed. The DFT treats the window as one period of a
+    // periodic signal (circular convolution), so the zero guard band keeps
+    // the spreading field's replicas from folding back into the physical
+    // window; while the field stays inside the guard band the result equals
+    // the linear (physical) convolution. See `fresnel::propagate` docs for
+    // the same rationale in expanded form.
     let mut buf = vec![Complex64::ZERO; nx_pad * ny_pad];
     for iy in 0..ny {
         for ix in 0..nx {
@@ -433,6 +438,9 @@ pub fn propagate(band: &BandField, z: f64, cfg: &AsmConfig) -> Result<BandField,
 
     fft2(&mut buf, nx_pad, ny_pad);
 
+    // Pointwise multiplication by H: by the convolution theorem this is the
+    // spatial convolution with the exact plane-wave-composition kernel; the
+    // evanescent region and the Matsushima band-limit mask zero those bins.
     let fx_axis = fftfreq(nx_pad, dx);
     let fy_axis = fftfreq(ny_pad, dy);
     for (iy, &fy) in fy_axis.iter().enumerate() {
@@ -454,7 +462,9 @@ pub fn propagate(band: &BandField, z: f64, cfg: &AsmConfig) -> Result<BandField,
 
     ifft2(&mut buf, nx_pad, ny_pad);
 
-    // Extract the central physical window.
+    // Extract the central physical window: same detector grid in, same grid
+    // out (dims/pitch preserved); the guard band is a computational artifact.
+    // Energy spread beyond the window is genuinely lost (crop).
     let mut out = Vec::with_capacity(nx * ny);
     for iy in 0..ny {
         for ix in 0..nx {
