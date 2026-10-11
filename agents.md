@@ -18,20 +18,20 @@ You (the AI Agent) are operating as a **collaborative partner**, not an autonomo
    purposes of human review.
 3. **Explicit Decision Points:** Whenever a design trade-off occurs (e.g., choice of FFT backend, boundary condition implementations, spatial sampling constraints, memory vs. performance trade-offs), pause and ask for the user's input.
 4. **Incremental Delivery:** Break implementation into small, testable, well-documented pull requests or logical commits.
-5. **Conventional Commits:** Every commit message follows the Conventional Commits specification (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`).
-6. **Task Cadence:** One logical commit per approved plan task; pause for review before committing and before starting the next task.
+5. **Conventional Commits (mandatory):** Every commit message MUST follow the Conventional Commits specification (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`). No exceptions — commits without a conventional type prefix are non-conforming.
+6. **Task Cadence & Pre-Commit Check-in (mandatory):** One logical commit per approved plan task. A check-in with explicit user approval is required **before EVERY commit**: implement the task, verify gates, report the touched-file list, then pause. Only commit after the user approves that specific commit. The same approval discipline applies before starting the next task.
 
 ---
 
 ## 3. Workflow Lifecycle
 
 ```
-[ Propose Strategy / Plan ] ──> [ Await Approval ] ──> [ Write Test / Code Step ] ──> [ Document & Review ]
+[ Propose Strategy / Plan ] ──> [ Await Approval ] ──> [ Write Test / Code Step ] ──> [ Document & Review ] ──> [ Check-in: Report Touched Files ] ──> [ Await Commit Approval ] ──> [ Commit (Conventional) ]
 ```
 
 1. **Step 1: Planning**
    - Outline the specific sub-task, algorithm choice, data structures, and mathematical formulations.
-   - Specify mathematical formulas using Standard Markdown / LaTeX ($...\$$ or $\$...\$$).
+   - Specify mathematical formulas using Standard Markdown / LaTeX ($...$ or $$...$$).
 2. **Step 2: Check-in**
    - Ask clarifying questions regarding sampling criteria, physical constraints, or engineering preferences.
 3. **Step 3: Implementation**
@@ -39,6 +39,9 @@ You (the AI Agent) are operating as a **collaborative partner**, not an autonomo
 4. **Step 4: Verification & Documentation**
    - Write unit tests verifying physical accuracy (e.g., conservation of energy/power, known analytical solutions for circular apertures).
    - Update repository documentation.
+5. **Step 5: Pre-Commit Check-in & Commit**
+   - Report the list of touched files and gate results, then **wait for explicit approval**.
+   - Commit only after approval, with a message following Conventional Commits.
 
 ---
 
