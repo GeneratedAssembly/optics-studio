@@ -6,12 +6,14 @@
 //! [`crate::field`] types stay pure data so multiple engines (angular spectrum,
 //! Fresnel/Fraunhofer, Rayleigh-Sommerfeld) can operate on the same grids.
 //!
-//! Planned contents:
+//! Public API:
 //!
-//! - `asm`: Angular Spectrum Method propagator (Phase 1, task 4).
+//! - [`asm`]: Angular Spectrum Method propagator (Phase 1).
+//!
+//! Internal:
+//!
 //! - `fft`: private orthonormal FFT and frequency-axis helpers shared by the
 //!   propagators; not part of the public API.
 
-// `fft` is consumed by `asm` (task 4); the allow is removed when that lands.
-#[allow(dead_code)]
+pub mod asm;
 mod fft;

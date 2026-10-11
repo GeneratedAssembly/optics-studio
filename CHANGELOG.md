@@ -32,6 +32,11 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   element interaction, so future incoherent multiband sources are collections
   of `BandField`s (intensities sum at detection). Phase-1 API follows:
   `propagate(&BandField, z, cfg)` and `Element::apply(&BandField)`.
+- **Signed propagation distances** (task 4, resolving a plan conflict): the
+  plan's `InvalidDistance (z ≤ 0)` contradicted its own round-trip test
+  (propagate $+z$ then $-z$). Implemented: `InvalidDistance` fires only for
+  non-finite $z$; $z = 0$ is the identity; negative $z$ back-propagates
+  ($H(f, -z) = H(f, z)^*$).
 
 ### Added
 
@@ -60,6 +65,35 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   energy conservation, delta → flat spectrum, plane-wave bin/sign convention,
   `fftfreq` and shift semantics vs NumPy.
 - Dependencies: `rustfft = "6"`, `thiserror = "2"` (error derive).
+- ASM propagator (`src/propagation/asm.rs`, public via `propagation::asm`):
+  transfer function $H = \exp(i k z \sqrt{1 - (\lambda f_x)^2 - (\lambda f_y)^2})$
+  with evanescent cutoff (textbook Eqs. 3.5–3.13), zero-padding (default 2x,
+  central window embedded/extracted), Matsushima & Shimobaba band-limited mask
+  using the **padded** grid width in $f_{\lim} = 1/(\lambda\sqrt{(2z/L)^2+1})$.
+  API: `propagate(&BandField, z, &AsmConfig) -> Result<BandField,
+  PropagationError>` and `sampling_report(&BandField, z, &AsmConfig) ->
+  SamplingReport`. `AsmConfig { padding, band_limited, strict, max_padding }`
+  with Phase-1 defaults (2.0, true, true, 8.0); structurally extensible for
+  future boundary strategies.
+- **Aliasing guard redesigned as O(1) mitigation, not O(N²) detection**
+  (check-in 2026-10-11): the worst adjacent-bin phase step of $H$ is bounded in
+  closed form from candidate worst-case bin pairs (band edges + mask corner);
+  in `strict` mode a violation first densifies the padded grid (doubling
+  `padding` up to `max_padding`; `1.0` disables mitigation), and
+  `AliasingRisk` is returned only when the cap cannot restore Nyquist adequacy.
+  Prevention remains the default via band-limiting.
+- `SamplingReport`: lambda, z, input dims/pitch, requested vs used padding,
+  padded dims, per-axis band limits, closed-form max adjacent-bin
+  transfer-function phase steps per axis, `nyquist_ok` (steps < π); manual
+  `Display`. `PropagationError` (thiserror):
+  `InvalidDistance`, `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`,
+  `AliasingRisk { report }`.
+- ASM unit tests: config defaults, padding math, band-limit behavior vs z,
+  $z=0$ identity, exact on-axis plane-wave phase $e^{ikz}$ and $+z/-z$
+  round-trip on the unpadded periodic grid, invalid-distance rejection, and
+  strict-mode `AliasingRisk` when mitigation is disabled (`max_padding = 1.0`)
+  and strict-mode automatic mitigation succeeding by densification
+  (`padding 1 → 8`, band-limiting off).
 - `CHANGELOG.md`.
 
 ### Changed
