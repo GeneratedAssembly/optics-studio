@@ -70,7 +70,8 @@ models).
 
 ### 2.3 `propagation` — engines
 
-- `fft` (private): orthonormal 2D transforms over row-major buffers via
+- `fft` (private): NumPy-convention 2D transforms (unnormalized forward,
+  $1/N$ inverse — exact circular convolution theorem) over row-major buffers via
   rustfft, frequency axes, NumPy-semantics shifts. All conventions
   (sign, scaling, bin order, shift) are documented in the module and pinned
   by dedicated unit tests *before* dependent code — per agents.md, these are
@@ -138,9 +139,10 @@ proactively via `sampling_report`.
 
 ## 6. Roadmap hooks
 
-- **Phase 2** (Fresnel/Fraunhofer): revisit FFT normalization for
-  convolution-form propagators ($\sqrt{N}$ factor under unitary scaling);
-  implement $N_F$-based regime guidance.
+- **Phase 2** (Fresnel/Fraunhofer): FFT normalization migrated to the
+  NumPy convention (exact convolution theorem; decision 2026-10-11 — done in
+  the task-1 commit); remaining: Fresnel TF + convolution propagators,
+  Fraunhofer limit, $N_F$-based regime guidance.
 - **Phase 3** (element library): rectangular/elliptical apertures, thin lens
   (quadratic phase), general phase-mask/DOE interface, grating.
 - **Phase 4** (Rayleigh–Sommerfeld): direct-integral/convolution form,

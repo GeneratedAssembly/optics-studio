@@ -1,15 +1,20 @@
-//! Private orthonormal 2D FFT and frequency-axis helpers for propagation
-//! engines.
+//! Private 2D FFT (NumPy scaling convention) and frequency-axis helpers for
+//! propagation engines.
 //!
 //! Conventions (deliberate, because shift/normalization bugs are the main
 //! failure mode of spectral propagators):
 //!
-//! - **Orthonormal scaling.** Both [`fft2`] and [`ifft2`] scale by
-//!   $1/\sqrt{N}$ per axis ($N = n_x n_y$ total), so each transform is unitary:
-//!   $\text{ifft2}(\text{fft2}(u)) = u$ and Parseval energy
-//!   $\sum |u|^2 = \sum |U|^2$ holds exactly (to floating-point roundoff).
-//!   Note that rustfft is unnormalized in **both** directions (its raw
-//!   round-trip returns $N u$), unlike NumPy's $1/N$-scaled inverse.
+//! - **Scaling (NumPy convention).** [`fft2`] is unnormalized (raw rustfft);
+//!   [`ifft2`] divides by $N = n_x n_y$. Round-trip is the identity, Parseval
+//!   reads $\sum |U|^2 = N \sum |u|^2$, and the circular convolution theorem
+//!   is **exact**: $u \circledast h = \mathcal{F}^{-1}\{\mathcal{F}\{u\}
+//!   \cdot \mathcal{F}\{h\}\}$ with no stray factors — the reason Phase 2
+//!   adopts this convention for convolution-form propagators and PSF analysis
+//!   (check-in 2026-10-11, superseding the Phase-1 unitary scaling). Note
+//!   rustfft is unnormalized in **both** directions (its raw round-trip
+//!   returns $N u$), so `ifft2` adds the $1/N$ that NumPy's inverse applies.
+//!   Transfer-function propagation (ASM, Fresnel TF form) is unaffected: the
+//!   factors cancel in $\mathcal{F}^{-1}\{H \cdot \mathcal{F}\{u\}\}$.
 //! - **Sign.** The forward kernel is $e^{-i 2\pi k n / N}$ (rustfft and NumPy
 //!   convention), so a discrete plane wave $x_n = e^{+i 2\pi k_0 n/N}$ has its
 //!   spectral mass in bin $+k_0$.
@@ -18,13 +23,6 @@
 //!   negative above the Nyquist index — see [`fftfreq`]. [`fftfreq_shifted`]
 //!   returns the same axis in ascending `fftshift` order for building shifted
 //!   transfer functions.
-//! - **Convention scope.** Unitary scaling is chosen for Phase-1 ASM, where
-//!   the scalings cancel in $\text{ifft2}(H \cdot \text{fft2}(u))$. It is NOT
-//!   convolution-theorem-neutral: $F\{x \otimes h\} = \sqrt{N}\,F\{x\}\,F\{h\}$.
-//!   Convolution-form propagators and PSF/impulse-response analysis (Phase 2+)
-//!   must either handle that factor explicitly or adopt
-//!   unnormalized-forward/$1/N$-inverse scaling (decision point recorded in
-//!   the plan roadmap and CHANGELOG).
 //! - **Shift semantics.** [`fftshift1d`] matches NumPy `fftshift` (roll by
 //!   $\lfloor n/2 \rfloor$), moving the zero-frequency bin to the array center;
 //!   [`ifftshift1d`] is its exact inverse (identical for even `n`).
@@ -36,53 +34,58 @@
 use num_complex::Complex64;
 use rustfft::{Fft, FftPlanner};
 
-/// Orthonormal forward 2D DFT of a row-major buffer, in place.
+/// Unnormalized forward 2D DFT of a row-major buffer, in place (NumPy
+/// convention: forward carries no scaling).
 ///
 /// `nx` samples per row (x), `ny` rows (y). Requires `buf.len() == nx * ny`.
 pub(crate) fn fft2(buf: &mut [Complex64], nx: usize, ny: usize) {
     let mut planner = FftPlanner::new();
     let plan_x = planner.plan_fft_forward(nx);
     let plan_y = planner.plan_fft_forward(ny);
-    transform2(buf, nx, ny, plan_x.as_ref(), plan_y.as_ref());
+    transform2(buf, nx, ny, plan_x.as_ref(), plan_y.as_ref(), None);
 }
 
-/// Orthonormal inverse 2D DFT of a row-major buffer, in place.
+/// Inverse 2D DFT of a row-major buffer, in place, scaled by $1 / (n_x n_y)$
+/// (NumPy convention) — the exact inverse of [`fft2`].
 ///
-/// Exact inverse of [`fft2`]; both directions are unitary (energy-transparent).
+/// With this scaling the circular convolution theorem is exact:
+/// $\mathcal{F}^{-1}\{\mathcal{F}\{u\} \cdot \mathcal{F}\{h\}\} = u \circledast h$.
 pub(crate) fn ifft2(buf: &mut [Complex64], nx: usize, ny: usize) {
     let mut planner = FftPlanner::new();
     let plan_x = planner.plan_fft_inverse(nx);
     let plan_y = planner.plan_fft_inverse(ny);
-    transform2(buf, nx, ny, plan_x.as_ref(), plan_y.as_ref());
+    transform2(
+        buf,
+        nx,
+        ny,
+        plan_x.as_ref(),
+        plan_y.as_ref(),
+        Some(1.0 / (nx * ny) as f64),
+    );
 }
 
-/// Applies the two 1D plans (x over contiguous rows, y over strided columns)
-/// with orthonormal $1/\sqrt{N}$ scaling per axis.
+/// Applies the two 1D plans (x over contiguous rows, y over strided columns),
+/// optionally scaling the whole buffer afterward (the $1/N$ of the NumPy
+/// convention inverse).
 ///
 /// rustfft is unnormalized in BOTH directions: raw inverse(raw forward(x)) =
-/// N * x (unlike NumPy, whose inverse divides by N). Orthonormal scaling
-/// therefore multiplies by 1/sqrt(N) after each 1D transform, whichever
-/// direction it runs, making both fft2 and ifft2 unitary.
+/// N * x (unlike NumPy, whose inverse divides by N). `ifft2` therefore passes
+/// the 1/N here; `fft2` passes `None`.
 fn transform2(
     buf: &mut [Complex64],
     nx: usize,
     ny: usize,
     plan_x: &dyn Fft<f64>,
     plan_y: &dyn Fft<f64>,
+    scale: Option<f64>,
 ) {
     assert_eq!(buf.len(), nx * ny, "fft buffer length mismatch");
     assert!(nx > 0 && ny > 0, "fft dimensions must be positive");
-
-    let scale_x = Complex64::from(1.0 / (nx as f64).sqrt());
-    let scale_y = Complex64::from(1.0 / (ny as f64).sqrt());
 
     // Rows (x axis) are contiguous; transform in place.
     for iy in 0..ny {
         let row = &mut buf[iy * nx..(iy + 1) * nx];
         plan_x.process(row);
-        for v in row.iter_mut() {
-            *v *= scale_x;
-        }
     }
 
     // Columns (y axis) are strided; gather, transform, scatter.
@@ -93,7 +96,14 @@ fn transform2(
         }
         plan_y.process(&mut col);
         for (r, v) in col.iter().enumerate().take(ny) {
-            buf[r * nx + ix] = *v * scale_y;
+            buf[r * nx + ix] = *v;
+        }
+    }
+
+    if let Some(s) = scale {
+        let s = Complex64::from(s);
+        for v in buf.iter_mut() {
+            *v *= s;
         }
     }
 }
@@ -224,48 +234,83 @@ mod tests {
     }
 
     #[test]
-    fn parseval_energy_is_conserved() {
-        // Orthonormal scaling => sum |u|^2 == sum |fft2(u)|^2 exactly.
+    fn parseval_energy_scales_by_n() {
+        // NumPy convention => sum |fft2(u)|^2 == N * sum |u|^2.
         let (nx, ny) = (9, 6);
+        let n = (nx * ny) as f64;
         let u = noise(nx * ny);
         let energy_in: f64 = u.iter().map(|s| s.norm_sqr()).sum();
         let mut buf = u;
         fft2(&mut buf, nx, ny);
         let energy_out: f64 = buf.iter().map(|s| s.norm_sqr()).sum();
-        assert!((energy_out - energy_in).abs() < 1e-9 * energy_in.max(1.0));
+        let expected = n * energy_in;
+        assert!((energy_out - expected).abs() < 1e-9 * expected.max(1.0));
     }
 
     #[test]
-    fn delta_gives_flat_unitary_spectrum() {
-        // Delta at index (0, 0): orthonormal DFT => every bin = 1/sqrt(nx*ny).
+    fn delta_gives_flat_unit_spectrum() {
+        // Delta at index (0, 0): unnormalized forward DFT => every bin = 1.
         let (nx, ny) = (8, 4);
         let mut buf = vec![Complex64::ZERO; nx * ny];
         buf[0] = Complex64::new(1.0, 0.0);
         fft2(&mut buf, nx, ny);
-        let expected = 1.0 / ((nx * ny) as f64).sqrt();
         assert!(
             buf.iter()
-                .all(|s| (s - Complex64::from(expected)).norm() < 1e-12)
+                .all(|s| (s - Complex64::new(1.0, 0.0)).norm() < 1e-12)
         );
+    }
+
+    #[test]
+    fn convolution_theorem_is_exact() {
+        // NumPy scaling pins F^{-1}{F{u} * F{h}} = circular convolution of
+        // u and h (textbook Eq. 2.23-2.24 form) with NO stray sqrt(N) factor.
+        let (nx, ny) = (5, 4);
+        let u = noise(nx * ny);
+        let h = noise(nx * ny);
+        let mut fu = u.clone();
+        let mut fh = h.clone();
+        fft2(&mut fu, nx, ny);
+        fft2(&mut fh, nx, ny);
+        let mut prod: Vec<Complex64> = fu.iter().zip(&fh).map(|(a, b)| *a * *b).collect();
+        ifft2(&mut prod, nx, ny);
+        // Reference 2D circular convolution, direct sum.
+        for iy in 0..ny {
+            for ix in 0..nx {
+                let mut acc = Complex64::ZERO;
+                for jy in 0..ny {
+                    for jx in 0..nx {
+                        let ux = u[jy * nx + jx];
+                        let hx = h[((iy + ny - jy) % ny) * nx + ((ix + nx - jx) % nx)];
+                        acc += ux * hx;
+                    }
+                }
+                let diff = (prod[iy * nx + ix] - acc).norm();
+                assert!(
+                    diff < 1e-9 * acc.norm().max(1.0),
+                    "convolution mismatch at {ix},{iy}"
+                );
+            }
+        }
     }
 
     #[test]
     fn plane_wave_energy_sits_in_positive_bin() {
         // Sign convention: x_n = e^{+i 2 pi k0 n / N} concentrates at bin +k0
         // of the unshifted forward transform (e^{-i 2 pi k n / N} kernel).
+        // Unnormalized forward: unit-amplitude ramp of length N lands with
+        // magnitude N in that single bin.
         let (nx, ny) = (16, 4);
         let k0 = 3usize;
         let mut buf = vec![Complex64::ZERO; nx * ny];
         for (i, v) in buf.iter_mut().enumerate() {
             let n = (i % nx) as f64;
-            *v = (2.0 * PI * k0 as f64 * n / nx as f64 * Complex64::I).exp() / (nx * ny) as f64;
+            *v = (2.0 * PI * k0 as f64 * n / nx as f64 * Complex64::I).exp();
         }
         fft2(&mut buf, nx, ny);
-        // Spectrum is constant along y (input independent of row); check row 0.
-        let power_at = |k: usize| buf[k].norm_sqr();
-        assert!((power_at(k0) - 1.0 / (nx * ny) as f64).abs() < 1e-12);
-        let total: f64 = buf.iter().map(|s| s.norm_sqr()).sum();
-        assert!((total - 1.0 / (nx * ny) as f64).abs() < 1e-12);
+        // y axis is constant => energy only at the y-DC row (iy = 0).
+        assert!((buf[k0] - Complex64::from(nx as f64 * ny as f64)).norm() < 1e-9);
+        let total: f64 = buf.iter().map(|s| s.norm()).sum::<f64>() - nx as f64 * ny as f64;
+        assert!(total.abs() < 1e-6, "spectral mass leaked out of bin +k0");
     }
 
     #[test]

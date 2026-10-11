@@ -12,7 +12,8 @@
 //!
 //! Internal:
 //!
-//! - `fft`: private orthonormal FFT and frequency-axis helpers shared by the
+//! - `fft`: private NumPy-convention FFT (unnormalized forward, $1/N$
+//!   inverse) and frequency-axis helpers shared by the
 //!   propagators; not part of the public API.
 
 pub mod asm;

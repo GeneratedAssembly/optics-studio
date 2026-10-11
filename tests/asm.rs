@@ -13,7 +13,7 @@
 //! - Eqs. 3.5–3.13 (plane-wave basis, direction cosines): the invariance and
 //!   tilt tests.
 //!
-//! Conventions (see `src/propagation/asm.rs` docs): all quantities SI; unitary
+//! Conventions (see `src/propagation/asm.rs` docs): all quantities SI; NumPy
 //! FFT normalization; $H$ applied in unshifted DFT bin order.
 
 use std::f64::consts::PI;
@@ -82,7 +82,8 @@ fn airy(v: f64) -> f64 {
 ///
 /// A compact Gaussian band, propagated a modest distance with the default
 /// configuration (padding 2, band-limited), must preserve total power in the
-/// extracted central window: the unitary FFT is energy-transparent and $|H| = 1$
+/// extracted central window: the FFT scalings cancel in the transfer-function
+/// form and $|H| = 1$
 /// on the pass band, so loss is only possible through crop or band clipping,
 /// both negligible here (window half-extent = 8.5 sigma; spectrum ~ 1/(2 pi sigma)
 /// << band limit). Relative tolerance 1e-9.

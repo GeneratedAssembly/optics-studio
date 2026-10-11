@@ -75,9 +75,14 @@ diffractive-optics design workflow.
 
 - **Backend:** `rustfft` (pure Rust, f64, arbitrary sizes). rustfft is
   *unnormalized in both directions* (raw round-trip returns $N u$), unlike
-  NumPy's $1/N$-inverse. We therefore apply unitary scaling $1/\sqrt{N}$ per
-  axis per direction, making `fft2`/`ifft2` exact inverses and energy-
-  transparent (Parseval holds numerically).
+  NumPy's $1/N$-inverse. We therefore apply the **NumPy convention**: forward
+  unnormalized, inverse scaled by $1/N$ — making `fft2`/`ifft2` exact
+  inverses, Parseval $\sum|U|^2 = N\sum|u|^2$, and the circular convolution
+  theorem *exact*: $\mathcal{F}^{-1}\{\mathcal{F}\{u\}\cdot\mathcal{F}\{h\}\}
+  = u \circledast h$ with no stray factors. (Adopted at the Phase-2 check-in
+  2026-10-11, superseding the Phase-1 unitary scaling; transfer-function
+  propagation — ASM, Fresnel TF form — is unaffected because the scalings
+  cancel in $\mathcal{F}^{-1}\{H\cdot\mathcal{F}\{u\}\}$.)
 - **Sign:** forward kernel $e^{-i 2\pi k n/N}$ (rustfft/NumPy), so a discrete
   plane wave $e^{+i2\pi k_0 n/N}$ lands in bin $+k_0$.
 - **Bin order:** transforms operate in standard (unshifted) DFT bin order;
@@ -189,7 +194,7 @@ $$\frac{I(v)}{I(0)} = \left[\frac{2 J_1(v)}{v}\right]^2, \qquad
 
 | Test | Physics statement | Analytic anchor | Tolerance |
 |---|---|---|---|
-| 1 | Energy conservation | unitary FFT, $\lvert H\rvert = 1$ on band | rel. power $\le 10^{-9}$ |
+| 1 | Energy conservation | NumPy-convention scalings cancel in ASM; $\lvert H\rvert = 1$ on band | rel. power $\le 10^{-9}$ |
 | 2 | Plane-wave invariance | single spectral bin gains $e^{ikz}$ | $10^{-6}$ |
 | 3 | Tilted plane wave | ramp slope $k\alpha$, $\alpha = \lambda f_x$ | $10^{-6}$ |
 | 4 | Airy far field | FT of circular aperture, $N_F = 0.05$ | profile $\le 2\%$ of peak; $r_1$ $\le 2\%$ |

@@ -7,6 +7,36 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Decisions (approved in planning check-ins, 2026-10-11, Phase 2)
+
+- **FFT normalization migrated to NumPy convention** (Phase 2 task-1
+  check-in): unnormalized forward, $1/N$ inverse — the circular convolution
+  theorem becomes exact ($\mathcal{F}^{-1}\{\mathcal{F}\{u\}\cdot
+  \mathcal{F}\{h\}\} = u \circledast h$), required by the convolution-form
+  Fresnel propagator and PSF analysis. **Supersedes** the Phase-1 unitary
+  scaling decision (see 0.1.0 above); ASM and transfer-form propagation are
+  behaviorally unaffected (scalings cancel). Parseval/delta/plane-wave fft
+  tests updated to the new convention; a new direct circular-convolution
+  cross-check pins the theorem.
+- **Phase 2 scope**: Fresnel transfer-function propagator + Fresnel
+  convolution (impulse-response) propagator + Fraunhofer limit; regime
+  guidance as **diagnostics only** (`fresnel_number`, `regime_report` — no
+  auto-select wrapper); full analytic validation set (Gaussian beam $q(z)$,
+  straight-edge Fresnel integrals, rectangular-aperture sinc², Airy via
+  Fraunhofer, cross-model consistency).
+- **Pre-commit check-in mandatory** (agents.md update, commit `be2cb30`):
+  explicit approval before every commit; Conventional Commits enforced.
+
+### Changed
+
+- `src/propagation/fft.rs`: `fft2` is now unnormalized and `ifft2` divides by
+  $N$ (was: $1/\sqrt{N}$ per axis in both directions). Propagator outputs are
+  mathematically identical (factors cancel in transfer-function form);
+  floating-point rounding differs at the $10^{-15}$ level. fft unit tests
+  re-pinned to the new convention (Parseval $\times N$, flat-unit delta
+  spectrum, single-bin plane wave $= N$) plus a new direct circular-
+  convolution theorem test.
+
 ## [0.1.0] - 2026-10-11
 
 Phase 1: field representation, ASM propagation, first element, physical
