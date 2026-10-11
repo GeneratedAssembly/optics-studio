@@ -1,11 +1,8 @@
-[workspace]
-resolver = "3"
-members = ["base"]
-
-[workspace.package]
-edition = "2024"
+[package]
+name = "optics-rs"
 version = "0.1.0"
+edition = "2024"
 
-[workspace.dependencies]
-dfdx = "0.13.0"
-num-traits = "0.2"
+[dependencies]
+num-complex = "0.4.6"
+rustfft = "6"
