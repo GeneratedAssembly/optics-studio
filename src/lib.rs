@@ -7,8 +7,8 @@
 //! convolution forms (`propagation::fresnel`), and the **Fraunhofer**
 //! far-field limit (`propagation::fraunhofer`) — with sampling guards,
 //! regime diagnostics (`propagation::regime`), and locally acting
-//! [`element::Element`]s (apertures, thin lens, analytic phase masks —
-//! the DOE interface — with gratings and thick elements in later phases),
+//! [`element::Element`]s (apertures, thin lens, phase masks — the DOE
+//! interface — and blazed gratings, with thick elements in later phases),
 //! with closed-form field initializers in
 //! [`sources`] (Gaussian beam) producing [`field::BandField`]s ready for
 //! propagation.

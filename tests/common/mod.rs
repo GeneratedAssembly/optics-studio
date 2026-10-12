@@ -4,6 +4,8 @@
 //! crate): classical functions are computed by quadrature inside tests,
 //! with the same care as the propagators — SI units, f64.
 
+#![allow(dead_code)] // Shared toolbox: individual targets use a subset.
+
 use num_complex::Complex64;
 use optics_rs::field::{BandField, Field};
 use std::f64::consts::PI;

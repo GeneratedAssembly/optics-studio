@@ -166,6 +166,38 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   window (inclusive corners, one-past-edge zeros, area-ratio power,
   asymmetric `OutsideField` diagnostics, rectangle taxonomy with
   conservative extent).
+- `BlazedGrating` (`src/element.rs`, Phase 3 task e): sawtooth blaze
+  $\varphi = \Phi\,((\mathbf{r}-\mathbf{c})\cdot\hat g/\Lambda \bmod 1)$
+  with period $\Lambda$, depth $\Phi$ (rad/period), and grating-vector
+  **orientation** $\psi$ from $+x$ (carried now; rotated-order validation
+  deferred with its tests, task-e decision 2026-10-12). Kinematic
+  identity: integer-$2\pi$ depths make $e^{i\varphi}$ EXACTLY a plane
+  wave tilted at $f = m/\Lambda$ (mod-1 wrap invisible), so the far field
+  is the pure order $m$ at $\sin\theta_m = m\lambda/\Lambda$ (textbook
+  Eqs. 1.1/2.26/5.1; Sec. 2.4.2 blaze efficiency). Constructors
+  `new(period, phase_depth, orientation, aperture, center)` +
+  `kinoform(...)` ($\Phi = 2\pi$) sugar; `phase_at` probe;
+  `worst_phase_step(band)` = $\Phi/\Lambda\cdot\max(|\cos\psi|\Delta x,
+  |\sin\psi|\Delta y)$ ramp bound (for $\Phi=2\pi,\psi=0$: period-
+  Nyquist $\Delta x < \Lambda/2$). `ClearAperture` stop (task-d form),
+  `kind = Diffractive`; new `OpticsError::InvalidGrating { period, depth,
+  orientation }`.
+- Grating unit tests (5, `src/element.rs`): sawtooth mod-1 wrap +
+  periodicity incl. negative coordinates; orientation rotates the grating
+  vector ($\psi=\pi/2$ steers along $+y$); integer-$2\pi$ depth equals a
+  tilted plane wave sample-exactly ($m=1,2$); hard-edge stop + oversized
+  footprint rejection + constructor validation + taxonomy; closed-form
+  worst step = finite-difference sweep maximum.
+- `tests/phase3.rs` (new integration suite, Fraunhofer-engine grating
+  validation; geometry gives exactly 100 output bins per order,
+  $N_F = 0.87 \le 1$ via declared `aperture_extent`): kinoform blaze
+  peaks at $x_1 = \lambda z/\Lambda$ (±2 bins) with >85% power in the
+  order +1 lobe and <3% leakage to orders 0/-1 (Eq. 2.26 + Sec. 2.4.2);
+  $4\pi$ depth steers order +2 to $x_2 = 2\lambda z/\Lambda$ (>80%);
+  $\pi$ depth splits ~40/40 between orders 0 and +1 with order -1 weak,
+  matching the sawtooth Fourier coefficients $|c_m|^2 = 4/(\pi^2(1-2m)^2)$
+  (Eq. 5.1 positions). Shared-helper toolbox `tests/common/mod.rs`
+  marked `allow(dead_code)` (targets use subsets).
 
 ### Changed
 

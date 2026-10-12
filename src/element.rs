@@ -98,6 +98,21 @@ pub enum OpticsError {
         /// The non-finite phase value the closure returned (rad).
         phase: f64,
     },
+    /// The grating geometry is not physically meaningful: the period must
+    /// be positive and finite; the blaze depth (rad) and orientation (rad)
+    /// must be finite.
+    #[error(
+        "grating needs positive finite period, finite depth and orientation \
+         (got period = {period} m, depth = {depth} rad, orientation = {orientation} rad)"
+    )]
+    InvalidGrating {
+        /// Grating period in meters.
+        period: f64,
+        /// Blaze depth in radians per period.
+        depth: f64,
+        /// Grating-vector orientation in radians from the +x axis.
+        orientation: f64,
+    },
 }
 
 /// Physical outline of an element's clear aperture.
@@ -893,7 +908,7 @@ impl Element for ThinLens {
 /// the project guidelines — the profile must satisfy
 /// $|\nabla\varphi| \cdot \max(\Delta x, \Delta y) < \pi$ on the grid.
 /// Structured elements validate themselves analytically where possible
-/// (see the linear-ramp bound in `RectangularGrating`, Phase 3 task e).
+/// (see the linear-ramp bound in [`BlazedGrating`], Phase 3 task e).
 // No `Clone`/`Debug`/`PartialEq` derives: the phase closure and `Material`
 // hold boxed functions; element identity is by value of its accessors.
 pub struct PhaseMask {
@@ -1015,6 +1030,222 @@ impl Element for PhaseMask {
                         phase: phi,
                     });
                 }
+                *s *= (phi * Complex64::I).exp();
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Ideal **blazed grating** (kinoform): a sawtooth phase ramp of period
+/// $\Lambda$ (m), total blaze depth $\Phi$ (rad per period), and grating
+/// vector along $\hat{g} = (\cos\psi, \sin\psi)$ — the orientation $\psi$
+/// (rad, from the $+x$ axis) is carried now; rotated-order validation
+/// arrives when the feature is exercised (task-e decision 2026-10-12).
+///
+/// $$\varphi(x, y) = \Phi \left(\frac{(\mathbf{r} - \mathbf{c}) \cdot
+///   \hat{g}}{\Lambda} \bmod 1\right), \qquad t = e^{i\varphi} \text{ on } A$$
+///
+/// with hard-edge [`ClearAperture`] stop $A$ (boundary inclusive, like
+/// [`ThinLens`] and [`PhaseMask`]). Key identity for depth $\Phi = 2\pi m$
+/// (integer $m$): $e^{i\varphi} \equiv e^{\,i 2\pi m\,(\mathbf{r}-\mathbf{c})
+///   \cdot\hat{g}/\Lambda}$ — the mod-1 wrap is invisible to the complex
+/// exponential, so the grating is EXACTLY a plane wave tilted along
+/// $\hat g$ at frequency $m/\Lambda$, and its far field is the single
+/// diffraction order $m$ at the grating equation (textbook Eqs. 1.1, 2.26,
+/// 5.1):
+///
+/// $$\sin\theta_m = \frac{m\lambda}{\Lambda}.$$
+///
+/// This is the Sec. 2.4.2 blazed grating whose efficiency "approaches
+/// 100%" into the design order; non-integer depths split power across
+/// orders per the Fourier series of the sawtooth (the square-wave
+/// efficiency law of Eqs. 2.27–2.29 is the amplitude analogue, deferred
+/// with its tests).
+///
+/// Sampling: the ramp gradient is $\Phi/\Lambda$, so the closed-form worst
+/// adjacent-sample step ([`BlazedGrating::worst_phase_step`]) must stay
+/// below $\pi$ — for the classic $\Phi = 2\pi$ kinoform this is exactly the
+/// period-Nyquist rule $\delta < \Lambda/2$.
+// No `Clone`/`Debug`/`PartialEq` derives: the `Material` field holds boxed
+// closures; element identity is by value of its accessors.
+pub struct BlazedGrating {
+    period: f64,      // Lambda, meters
+    phase_depth: f64, // Phi, radians per period
+    orientation: f64, // psi, radians from +x axis (grating vector direction)
+    aperture: ClearAperture,
+    center: (f64, f64), // grating origin, meters, field coordinates
+    shape: ElementShape,
+    material: Material,
+}
+
+impl BlazedGrating {
+    /// Blazed grating with period `period` (m, positive finite), blaze
+    /// depth `phase_depth` (rad per period, finite), grating-vector
+    /// orientation `orientation` (rad from $+x$), clear aperture
+    /// `aperture`, and origin `center` (m, m).
+    ///
+    /// # Errors
+    /// [`OpticsError::InvalidGrating`] for a non-positive/non-finite period
+    /// or non-finite depth/orientation; the stop is validated with the
+    /// shared aperture rules (`InvalidAperture` / `InvalidAxis`).
+    pub fn new(
+        period: f64,
+        phase_depth: f64,
+        orientation: f64,
+        aperture: ClearAperture,
+        center: (f64, f64),
+    ) -> Result<Self, OpticsError> {
+        if !period.is_finite()
+            || period <= 0.0
+            || !phase_depth.is_finite()
+            || !orientation.is_finite()
+        {
+            return Err(OpticsError::InvalidGrating {
+                period,
+                depth: phase_depth,
+                orientation,
+            });
+        }
+        aperture.validate(center)?;
+        let shape = aperture.shape();
+        Ok(Self {
+            period,
+            phase_depth,
+            orientation,
+            aperture,
+            center,
+            shape,
+            material: Material::new(|_lambda, _angle| 1.0, |_lambda, _angle| 0.0),
+        })
+    }
+
+    /// Classic **kinoform blaze**: depth $\Phi = 2\pi$ per period — a pure
+    /// tilted plane wave steering all power into diffraction order $m = 1$
+    /// (textbook Sec. 2.4.2, Fig. 1.17).
+    ///
+    /// # Errors
+    /// As [`BlazedGrating::new`].
+    pub fn kinoform(
+        period: f64,
+        orientation: f64,
+        aperture: ClearAperture,
+        center: (f64, f64),
+    ) -> Result<Self, OpticsError> {
+        Self::new(period, 2.0 * PI, orientation, aperture, center)
+    }
+
+    /// Grating period $\Lambda$ in meters.
+    pub fn period(&self) -> f64 {
+        self.period
+    }
+
+    /// Blaze depth $\Phi$ in radians per period.
+    pub fn phase_depth(&self) -> f64 {
+        self.phase_depth
+    }
+
+    /// Grating-vector orientation $\psi$ in radians from the $+x$ axis.
+    pub fn orientation(&self) -> f64 {
+        self.orientation
+    }
+
+    /// The grating's clear aperture.
+    pub fn aperture(&self) -> ClearAperture {
+        self.aperture
+    }
+
+    /// Grating origin $(x_c, y_c)$ in meters (field coordinates).
+    pub fn center(&self) -> (f64, f64) {
+        self.center
+    }
+
+    /// Sawtooth probe: blaze phase (rad) at center-relative coordinates
+    /// `(x, y)` (m), i.e. $\Phi \cdot ((\mathbf{r}\cdot\hat g/\Lambda)
+    /// \bmod 1)$.
+    pub fn phase_at(&self, x: f64, y: f64) -> f64 {
+        let u = (x * self.orientation.cos() + y * self.orientation.sin()) / self.period;
+        self.phase_depth * (u - u.floor())
+    }
+
+    /// Worst adjacent-sample phase step of the ramp on `band`'s grid,
+    /// radians — closed form $O(1)$: the gradient magnitude is
+    /// $\Phi/\Lambda$ along $\hat g$, so steps are
+    /// $(\Phi/\Lambda)|\cos\psi|\,\Delta x$ along $x$ and
+    /// $(\Phi/\Lambda)|\sin\psi|\,\Delta y$ along $y$; the maximum must
+    /// stay below $\pi$ (for $\Phi = 2\pi$ and $\psi = 0$: $\Delta x <$
+    /// $\Lambda/2$, the period-Nyquist rule). Reports the ramp bound:
+    /// for integer-$2\pi$ depths the sawtooth wrap is invisible to
+    /// $e^{i\varphi}$; for other depths the physical discontinuity jump
+    /// (magnitude $|\Phi \bmod 2\pi|$, principal value) is additional.
+    /// Reported, not enforced.
+    pub fn worst_phase_step(&self, band: &BandField) -> f64 {
+        let (dx, dy) = band.field().pitch();
+        let slope = self.phase_depth.abs() / self.period;
+        slope * (self.orientation.cos().abs() * dx).max(self.orientation.sin().abs() * dy)
+    }
+}
+
+impl Element for BlazedGrating {
+    fn shape(&self) -> &ElementShape {
+        &self.shape
+    }
+
+    fn kind(&self) -> ElementKind {
+        ElementKind::Diffractive
+    }
+
+    fn material(&self) -> (&Material, &Material) {
+        (&self.material, &self.material)
+    }
+
+    /// The grating's own clear aperture; `Unbounded` for
+    /// [`ClearAperture::Field`].
+    fn extent(&self) -> Extent {
+        match self.aperture.extent_radius() {
+            Some(r) => Extent::Aperture(r),
+            None => Extent::Unbounded,
+        }
+    }
+
+    /// Paints the sawtooth blaze phase onto the plane inside the clear
+    /// aperture (hard zero outside, boundary inclusive).
+    ///
+    /// # Errors
+    /// [`OpticsError::OutsideField`] if a stopped grating's footprint
+    /// exceeds the grid.
+    fn apply(&self, band: &BandField) -> Result<BandField, OpticsError> {
+        let (cx, cy) = self.center;
+        if let Some((fx, fy)) = self.aperture.footprint() {
+            let (grid_half_x, grid_half_y) = grid_half_extents(band);
+            if cx.abs() + fx > grid_half_x || cy.abs() + fy > grid_half_y {
+                return Err(OpticsError::OutsideField {
+                    half_x: fx,
+                    half_y: fy,
+                    center_x: cx,
+                    center_y: cy,
+                    grid_half_x,
+                    grid_half_y,
+                });
+            }
+        }
+        let gx = self.orientation.cos();
+        let gy = self.orientation.sin();
+        let inv_period = 1.0 / self.period;
+        let mut out = band.clone();
+        let field = out.field_mut();
+        let (nx, ny) = field.dims();
+        for iy in 0..ny {
+            for ix in 0..nx {
+                let (x, y) = field.coord(ix, iy);
+                let (xr, yr) = (x - cx, y - cy);
+                let s = field.sample_mut(ix, iy);
+                if !self.aperture.contains(xr, yr) {
+                    *s = Complex64::ZERO;
+                    continue;
+                }
+                let u = (xr * gx + yr * gy) * inv_period;
+                let phi = self.phase_depth * (u - u.floor());
                 *s *= (phi * Complex64::I).exp();
             }
         }
@@ -1754,5 +1985,133 @@ mod tests {
             el.extent(),
             Extent::Aperture(r) if (r - 40e-3).abs() < 1e-18
         ));
+    }
+
+    #[test]
+    fn sawtooth_phase_wraps_mod_one() {
+        // Kinoform (depth 2pi, psi=0): phi = 2pi*frac(x/Lambda). Check the
+        // profile repeats with period Lambda and ramps 0 -> 2pi across it.
+        let period = 100e-6;
+        let g = BlazedGrating::kinoform(period, 0.0, ClearAperture::Field, (0.0, 0.0)).unwrap();
+        // Sample the ramp at x = 0, quarter, half, three-quarter period.
+        let at = |x: f64| g.phase_at(x, 0.0);
+        assert!(at(0.0).abs() < 1e-12);
+        assert!((at(period / 4.0) - PI / 2.0).abs() < 1e-12);
+        assert!((at(period / 2.0) - PI).abs() < 1e-12);
+        assert!((at(3.0 * period / 4.0) - 3.0 * PI / 2.0).abs() < 1e-12);
+        // Periodicity: one full period wraps back to 0 (mod 2pi).
+        assert!(at(period).abs() < 1e-12);
+        assert!((at(-period / 4.0) - 3.0 * PI / 2.0).abs() < 1e-12); // frac(-0.25)=0.75
+    }
+
+    #[test]
+    fn orientation_rotates_the_grating_vector() {
+        // psi = pi/2 steers along +y: phase depends on y, constant in x.
+        let period = 100e-6;
+        let g =
+            BlazedGrating::kinoform(period, PI / 2.0, ClearAperture::Field, (0.0, 0.0)).unwrap();
+        assert!(g.phase_at(period / 4.0, 0.0).abs() < 1e-12); // x-projection 0
+        assert!((g.phase_at(0.0, period / 4.0) - PI / 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn blaze_integer_2pi_depth_is_a_pure_tilted_plane_wave() {
+        // Depth Phi = 2 pi m => e^{i phi} == e^{i 2 pi m x/Lambda} exactly
+        // (the mod-1 wrap is invisible). Compare a grating to a PhaseMask
+        // carrying that plane-wave ramp, m = 1 and m = 2.
+        let period = 100e-6;
+        let band = BandField::uniform(1.0, 0.0, 64, 64, 5e-6, 5e-6, lambda()).unwrap();
+        for m in [1.0f64, 2.0] {
+            let g = BlazedGrating::new(period, 2.0 * PI * m, 0.0, ClearAperture::Field, (0.0, 0.0))
+                .unwrap();
+            let out = g.apply(&band).unwrap();
+            let k = 2.0 * PI * m / period;
+            for iy in 0..64usize {
+                for ix in 0..64 {
+                    let (x, _) = band.field().coord(ix, iy);
+                    let err =
+                        (out.field().sample(ix, iy).arg() - k * x + PI).rem_euclid(2.0 * PI) - PI;
+                    assert!(err.abs() < 1e-9, "m={m} at ({ix},{iy}): {err}");
+                    assert!((out.field().sample(ix, iy).norm() - 1.0).abs() < 1e-12);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grating_masks_and_validates() {
+        let band = band_101();
+        let period = 100e-3; // coarse so the stop dominates the check
+        let g =
+            BlazedGrating::kinoform(period, 0.0, ClearAperture::Circle(30e-3), (0.0, 0.0)).unwrap();
+        let out = g.apply(&band).unwrap();
+        // Hard-edge stop: (x = 30 mm, y = 0) inclusive; one past is zero.
+        assert!((out.field().sample(80, 50).norm() - 1.0).abs() < 1e-12);
+        assert_eq!(out.field().sample(81, 50), Complex64::ZERO);
+        assert_eq!(out.field().sample(100, 100), Complex64::ZERO);
+        // Oversized footprint rejected.
+        let big =
+            BlazedGrating::kinoform(period, 0.0, ClearAperture::Circle(55e-3), (0.0, 0.0)).unwrap();
+        assert!(matches!(
+            big.apply(&band),
+            Err(OpticsError::OutsideField { half_x: 55e-3, .. })
+        ));
+        // Constructor validation: period/depth/orientation are grating
+        // geometry; the stop keeps the shared aperture errors.
+        for bad_period in [0.0, -1e-3, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                BlazedGrating::new(bad_period, PI, 0.0, ClearAperture::Field, (0.0, 0.0)),
+                Err(OpticsError::InvalidGrating { period, .. })
+                    if period == bad_period || bad_period.is_nan()
+            ));
+        }
+        assert!(matches!(
+            BlazedGrating::new(period, f64::NAN, 0.0, ClearAperture::Field, (0.0, 0.0)),
+            Err(OpticsError::InvalidGrating { depth, .. }) if depth.is_nan()
+        ));
+        assert!(matches!(
+            BlazedGrating::new(period, PI, f64::INFINITY, ClearAperture::Field, (0.0, 0.0)),
+            Err(OpticsError::InvalidGrating { orientation, .. })
+                if orientation == f64::INFINITY
+        ));
+        assert!(matches!(
+            BlazedGrating::new(period, PI, 0.0, ClearAperture::Circle(0.0), (0.0, 0.0)),
+            Err(OpticsError::InvalidAperture { .. })
+        ));
+        // Taxonomy.
+        let el: &dyn Element = &g;
+        assert!(matches!(el.kind(), ElementKind::Diffractive));
+        assert!(matches!(el.shape(), ElementShape::Circle));
+        assert!(matches!(
+            el.extent(),
+            Extent::Aperture(r) if (r - 30e-3).abs() < 1e-18
+        ));
+    }
+
+    #[test]
+    fn grating_worst_phase_step_closed_form_matches_sweep() {
+        // kinoform 2pi along x: ramp step = 2pi * dx / period (no wrap
+        // because e^{i 2pi frac} = e^{i 2pi u}); keep it below pi.
+        let period = 51.2e-6;
+        let d = 20e-6; // 2pi * 20/51.2 = 2.45 rad < pi
+        let band = BandField::uniform(1.0, 0.0, 64, 64, d, d, lambda()).unwrap();
+        let g = BlazedGrating::kinoform(period, 0.0, ClearAperture::Field, (0.0, 0.0)).unwrap();
+        let out = g.apply(&band).unwrap();
+        let field = out.field();
+        let mut max_step = 0.0f64;
+        for iy in 0..64usize {
+            for ix in 1..64 {
+                let s = (field.sample(ix, iy) / field.sample(ix - 1, iy))
+                    .arg()
+                    .abs();
+                max_step = max_step.max(s);
+            }
+        }
+        let closed = g.worst_phase_step(&band);
+        assert!(closed < PI, "geometry must stay unwrapped, got {closed}");
+        assert!(
+            (closed - max_step).abs() < 1e-9,
+            "closed {closed} vs sweep {max_step}"
+        );
     }
 }
