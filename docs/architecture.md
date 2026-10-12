@@ -181,18 +181,47 @@ one propagation-level type is a later API decision.
 
 ## 6. Roadmap hooks
 
-- **Phase 2** (Fresnel/Fraunhofer) — **complete**: NumPy-convention FFT
-  scaling (exact convolution theorem), Fresnel TF + convolution propagators
-  with reciprocal guards, Fraunhofer limit with regime gate, off-axis
-  `source_pos`, declared `aperture_extent`, and diagnostics-only regime
-  guidance.
-- **Phase 3** (element library): rectangular/elliptical apertures, thin lens
-  (quadratic phase), general phase-mask/DOE interface, grating.
+- **Phase 2** (Fresnel/Fraunhofer) — **complete, released as 0.2.0**:
+  NumPy-convention FFT scaling (exact convolution theorem), Fresnel TF +
+  convolution propagators with reciprocal guards, Fraunhofer limit with
+  regime gate, off-axis `source_pos`, declared `aperture_extent`, and
+  diagnostics-only regime guidance.
+- **Phase 3** (element library, thin): rectangular/elliptical apertures,
+  thin lens with dispersive focal length $f(\lambda)$, general analytic
+  phase-mask/DOE interface, grating; plus `sources` field initializers
+  (Gaussian beam) pulled forward as PSF prerequisites.
 - **Phase 4** (Rayleigh–Sommerfeld): direct-integral/convolution form,
-  cross-model consistency.
-- **Phase 5** (sources & output): field initializers from `Wave`, Gaussian/
-  multimode sources, visualization/export (backend = decision point), API
-  ergonomics (convenience methods / `Propagator` trait).
+  cross-model consistency vs ASM/Fresnel.
+- **Phase 5** (sources & output): multimode/HG/LG initializers,
+  visualization/export (backend = decision point), API ergonomics
+  (convenience methods / `Propagator` trait). PSF graphing and standard
+  test-image convolution belong here or in the front-end project.
+- **Phase 6** (element library expansion — thick elements): thick lens
+  (two surfaces + internal propagation, consuming `Extent::Thick` and the
+  `Material` pair), mirrors, prisms, waveplates as wave-optics models.
+- **Design TBD (unscheduled)**: Zemax-style interactive front-end (a
+  separate project consuming this crate's headless API), inverse solving
+  (weighted least-squares DOE design, Gerchberg–Saxton phase retrieval per
+  textbook Sec. 5.5), PSF visual-analysis suite. Design choices below are
+  made now to keep these open.
+
+**Forward-compatibility design choices (decided at Phase-3 planning):**
+
+1. `Element::apply` stays **strictly local** (same grid in/out) — thick
+   elements are later *composed* as surface → `propagate` → surface, never
+   a special case inside `apply`.
+2. Focal length is a **closure $f(\lambda)$** mirroring `Material`'s
+   design — dispersive and achromatic doubles need no API change.
+3. Phase masks take an **analytic closure** $(x,y)\to$ phase now; the
+   sampled-profile variant arrives with Phase 5 export needs (inverse
+   design will produce sampled profiles).
+4. All engine reports are `Copy` with public fields — trivially
+   serializable for the future front-end/export layer (serde is a Phase 5
+   decision, not added now).
+5. `sources` is a new top-level module; initializers return `BandField`,
+   so multiband incoherent stacks (collections of `BandField`s) extend it
+   without touching propagation or element code.
 
 Out of scope (agents.md): ray tracing / geometric optics, vector field grids,
-GPU/parallelism, dispersive propagators.
+GPU/parallelism, dispersive propagators, interactive visualization *inside
+this crate* (the front-end project owns the UI).

@@ -7,6 +7,25 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Decisions (roadmap revision, 2026-10-12, user)
+
+- Roadmap re-sequenced: **Phase 3** thin element library + Gaussian
+  `sources` initializers; **Phase 4** Rayleigh–Sommerfeld (restored);
+  **Phase 5** sources & output incl. visualization/export (restored);
+  **Phase 6** element library expansion — thick lens (surfaces + internal
+  propagation via `Extent::Thick`/`Material`) and further elements.
+  **Design TBD (unscheduled)**: Zemax-style interactive front-end
+  (separate project; this crate stays the headless compute core), inverse
+  solving (weighted least-squares DOE, Gerchberg–Saxton retrieval), PSF
+  visual-analysis suite.
+- Phase-3 design choices locking future doors: `apply` stays strictly
+  local (thick elements compose surface→propagate→surface); lens focal
+  length is a dispersive closure $f(\lambda)$ mirroring `Material`;
+  `PhaseMask` takes an analytic closure now, sampled-profile variant with
+  Phase 5; engine reports stay `Copy` + public fields for later
+  serialization; `sources` is a new top-level module returning
+  `BandField`s (multiband-ready by construction).
+
 ## [0.2.0] - 2026-10-12
 
 Phase 2: Fresnel (TF + convolution) and Fraunhofer propagation, regime
