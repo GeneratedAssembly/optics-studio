@@ -17,8 +17,11 @@ protocol in [`../agents.md`](../agents.md).
         element ──────┼──→ field (local transformations of BandField)
                       │
         propagation ──┴──→ field (algorithms over BandField)
-            ├── fft   (private layer: rustfft wrapper, conventions)
-            └── asm   (public Angular Spectrum propagator)
+            ├── fft        (private layer: rustfft wrapper, conventions)
+            ├── asm        (exact Angular Spectrum)
+            ├── fresnel    (paraxial: transfer function + convolution)
+            ├── fraunhofer (far-field FT, regime-gated)
+            └── regime     (diagnostics: N_F, guards, engine recommendation)
 ```
 
 Hard rule (agents.md §4): **algorithms depend on data, never the reverse.**
@@ -34,7 +37,7 @@ Phase 5 decision point.
 | `wave` | Scalar source/beam parameter records (pre-sampling) | `Wavelength`, `Polarization`, `Wave` |
 | `field` | Complex sample grids; wavelength decoupled from geometry | `Field`, `BandField`, `FieldError` |
 | `element` | Local field transformations; element taxonomy | `Element` trait, `CircularAperture`, `OpticsError`, `ElementShape`, `ElementKind`, `Extent`, `Material` |
-| `propagation` | Wave-optics engines | `asm` (public); `fft` (private) |
+| `propagation` | Wave-optics engines + regime diagnostics | `asm`, `fresnel`, `fraunhofer`, `regime` (public); `fft` (private) |
 
 ### 2.1 `field` — the two-layer split
 
@@ -58,7 +61,7 @@ length `nx*ny`, positive finite pitch, positive finite λ, finite samples.
 transmission function onto the sampled plane; grid dimensions, pitch, and
 wavelength are preserved. An element never resamples or propagates — the
 Fresnel/Fraunhofer regime of the downstream pattern is judged by the Fresnel
-number $N_F = a^2/(\lambda z)$ at propagation time (see `physics.md` §6), so
+number $N_F = a^2/(\lambda z)$ at propagation time (see `physics.md` §9), so
 elements expose aperture geometry (`CircularAperture::radius`) for Phase 2+
 regime guidance.
 
@@ -76,73 +79,113 @@ models).
   (sign, scaling, bin order, shift) are documented in the module and pinned
   by dedicated unit tests *before* dependent code — per agents.md, these are
   the primary bug source.
-- `asm` (public): transfer-function propagation with zero-padding and the
-  Matsushima band-limit; closed-form $O(1)$ sampling guard with automatic
-  densification in strict mode. API:
+- `asm` (public): exact transfer-function propagation with zero-padding and
+  the Matsushima band-limit; closed-form $O(1)$ sampling guard with automatic
+  densification in strict mode. `AsmConfig { padding, band_limited, strict,
+  max_padding }` is structurally extensible: future boundary-condition
+  strategies arrive as new fields/variants without changing existing
+  behavior.
+- `fresnel` (public): paraxial pair sharing one report/config surface —
+  `propagate` (transfer-function form, $H_F$ chirp, guard $n\Delta x^2 >
+  \lambda z$, densification mitigation) and `propagate_convolution`
+  (sampled impulse response, rule-2 guard $n\Delta x^2 \lesssim \lambda z$,
+  no mitigation loop — densification worsens kernel sampling). The guards
+  are reciprocal (complementary regimes, crossing at critical sampling).
+  `FresnelConfig { padding, strict, max_padding }`;
+  `FresnelSamplingReport` carries both guards plus the paraxial-validity
+  diagnostic (`max_phase_error_vs_asm`, `paraxial_ok`).
+- `fraunhofer` (public): far-field FT with its own output grid
+  ($\Delta X = \lambda|z|/(n\Delta x)$ — the only resampling engine),
+  exact offset-DFT bin alignment (all parities), Fresnel-number regime gate,
+  and off-axis support. `FraunhoferConfig { strict, max_n_f, source_pos,
+  aperture_extent }`; `regime_report(band, z, cfg)` exposes $N_F$, extent
+  provenance, and the dropped-quadratic bound.
+- `regime` (public): **diagnostics only** (approved decision — no
+  auto-dispatch). `fresnel_number(a, lambda, z)` and
+  `regime_report(_with)(band, z[, aperture])` evaluate the criteria ladder
+  and recommend an `Engine`; the caller always chooses.
 
-  ```rust
-  pub fn propagate(band: &BandField, z: f64, cfg: &AsmConfig)
-      -> Result<BandField, PropagationError>;
-  pub fn sampling_report(band: &BandField, z: f64, cfg: &AsmConfig)
-      -> SamplingReport;
-  ```
+Public API shape (uniform across engines):
 
-  `AsmConfig { padding, band_limited, strict, max_padding }` is structurally
-  extensible: future boundary-condition strategies arrive as new
-  fields/variants without changing existing behavior (Phase 1 implements only
-  pad + band-limit, per the approved decision).
+```rust
+pub fn propagate(band: &BandField, z: f64, cfg: &Cfg) -> Result<BandField, Err>;
+pub fn sampling_report(band: &BandField, z: f64, cfg: &Cfg) -> Report;  // asm, fresnel
+pub fn regime_report(band: &BandField, z: f64, cfg: &FraunhoferConfig) -> FraunhoferReport;
+```
+
+All engines are free functions; propagators depend on `field`, never the
+reverse, and never on `element` (composition is caller-side — see §3).
 
 ## 3. Data flow
 
 ```
 Wave (source params) ──Phase 5──→ Field ──bind λ──→ BandField
                                                         │
-                          Element::apply (mask, phase)  │  local
+                          Element::apply (mask, phase)  │  local, at a plane
                                                         ↓
-                                                     BandField ──→ propagate(band, z, cfg)
-                                                                     │ sampling guard /
-                                                                     │ mitigation
-                                                                     ↓
-                                              BandField (next plane) ──→ … → detector
-                                                                     (intensities sum for multiband)
+                                            BandField (plane z0)
+                                                        │
+              regime::regime_report(band, z) ──(diagnostic)──┐
+                                                        ↓     ↓
+              asm::propagate | fresnel::propagate[_convolution] | fraunhofer::propagate
+                                                        │  free space z1−z0, guards/mitigation
+                                                        ↓
+                                            BandField (plane z1) ──→ … → detector
+                                                        (intensities sum for multiband)
 ```
 
-Phase 1 entry points: `BandField::{uniform, plane_wave, new}` build fields
-directly; `propagation::asm::propagate` advances them; `Element::apply`
-transforms them.
+`apply` and `propagate` never call each other: elements are local
+transmission-function multiplications; propagators are free space only.
+Engine choice per segment is the caller's, optionally informed by `regime`.
+Fraunhofer is the sole exception to the same-grid contract (its output
+plane is physically a different sampling). Phase entry points:
+`BandField::{uniform, plane_wave, new}` build fields;
+`propagation::*::propagate` advances them; `Element::apply` transforms them.
 
 ## 4. Error taxonomy
 
 Plain thiserror enums; variants carry diagnostics (agents.md §4).
+Sampling/regime reports travel *boxed* inside the risk variants (review
+decision 2026-10-11, consistent across engines) and are also available
+proactively via the `*_report` functions.
 
 | Type | Module | Variants |
 |---|---|---|
 | `FieldError` | `field` | `EmptyGrid`, `DimensionMismatch { len, expected }`, `NonPositivePitch { dx, dy }`, `NonPositiveWavelength(λ)`, `NonFiniteSample` |
 | `OpticsError` | `element` | `InvalidAperture { radius, center }`, `OutsideField { radius, center, half-extents }` |
-| `PropagationError` | `propagation::asm` | `InvalidDistance(z)` (non-finite only — signed z is valid), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `AliasingRisk { report: SamplingReport }` |
+| `PropagationError` | `propagation::asm` | `InvalidDistance(z)` (non-finite only — signed z is valid), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `AliasingRisk { report: Box<SamplingReport> }` |
+| `FresnelError` | `propagation::fresnel` | same taxonomy; `AliasingRisk { report: Box<FresnelSamplingReport> }` (TF form: post-mitigation failure; convolution form: immediate kernel failure) |
+| `FraunhoferError` | `propagation::fraunhofer` | `InvalidDistance(z)` (non-finite **or zero** — far-field map singular at z=0), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `RegimeViolation { report: Box<FraunhoferReport> }` |
 
-`SamplingReport` is the exposed sampling check (λ, z, grid, requested/used
-padding, band limits, closed-form worst phase steps, `nyquist_ok`, `Display`).
-It travels *inside* the error variant when mitigation fails, and is available
-proactively via `sampling_report`.
+`sampling_report` (asm, fresnel) and `regime_report` (fraunhofer, regime)
+expose the criteria before propagation; `Display` implementations print all
+diagnostics plus remedy hints. Unifying the three engine error enums into
+one propagation-level type is a later API decision.
 
 ## 5. Testing strategy
 
 - **Unit tests** beside each module: grid/index/coordinate mapping, FFT
-  conventions (round-trip, Parseval, bin/sign, shift semantics vs NumPy), ASM
-  internals (padding math, band-limit vs z, identity, mitigation ladder),
-  element mask geometry.
-- **Physical validation** (`tests/asm.rs`): six analytics-based integration
-  tests with stated tolerances — see the mapping table in `physics.md` §8.
+  conventions (round-trip, Parseval $\times N$, bin/sign, shift semantics vs
+  NumPy, exact circular-convolution theorem), ASM internals (padding math,
+  band-limit vs z, identity, mitigation ladder), Fresnel guards (closed-form
+  step = sweep maximum, complementarity, critical-sampling TF-vs-convolution
+  agreement $<10^{-6}$, delta = sampled kernel), Fraunhofer (delta prefactor
+  identity, DC concentration, Parseval power, regime gate, off-axis ramp),
+  regime ladder outcomes, element mask geometry.
+- **Physical validation** (`tests/asm.rs`, `tests/phase2.rs`; shared
+  analytics in `tests/common/mod.rs` — dependency-free quadrature for
+  $J_1$, Fresnel integrals): eleven analytics-based integration tests with
+  stated tolerances — see the mapping table in `physics.md` §11.
 - Gates: `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`,
   `cargo doc` (docstring/unit-documentation standard).
 
 ## 6. Roadmap hooks
 
-- **Phase 2** (Fresnel/Fraunhofer): FFT normalization migrated to the
-  NumPy convention (exact convolution theorem; decision 2026-10-11 — done in
-  the task-1 commit); remaining: Fresnel TF + convolution propagators,
-  Fraunhofer limit, $N_F$-based regime guidance.
+- **Phase 2** (Fresnel/Fraunhofer) — **complete**: NumPy-convention FFT
+  scaling (exact convolution theorem), Fresnel TF + convolution propagators
+  with reciprocal guards, Fraunhofer limit with regime gate, off-axis
+  `source_pos`, declared `aperture_extent`, and diagnostics-only regime
+  guidance.
 - **Phase 3** (element library): rectangular/elliptical apertures, thin lens
   (quadratic phase), general phase-mask/DOE interface, grating.
 - **Phase 4** (Rayleigh–Sommerfeld): direct-integral/convolution form,

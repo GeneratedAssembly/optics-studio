@@ -1,7 +1,9 @@
 # Physics — Wave-Optics Propagation in `optics-rs`
 
 This document details the mathematical models, transfer functions, and
-validity regimes implemented in Phase 1. The ultimate source of truth is
+validity regimes implemented in Phases 1–2 (ASM exact; Fresnel transfer-
+function and convolution forms; Fraunhofer far field; regime guidance).
+The ultimate source of truth is
 *Diffractive Optics: Design, Fabrication, and Test* (SPIE TT95, the textbook
 PDF at the repository root); references below use its numbering.
 
@@ -145,7 +147,137 @@ $\approx \pi$ by construction ($k\lambda/2$ at the mask edge), which is
 precisely why prevention-by-band-limiting is the default and the guard rarely
 fires; the guard matters for `band_limited = false` runs.
 
-## 6. Elements: local interaction, propagation decides regimes
+## 6. Fresnel propagation (Phase 2)
+
+Two discrete forms of the paraxial propagator, related by the convolution
+theorem and complementary in sampling. Expanding the ASM direction cosine
+$\gamma = \sqrt{1-s} \approx 1 - s/2$ with $s = (\lambda f_x)^2 +
+(\lambda f_y)^2$ gives the Fresnel transfer function
+
+$$H_F(f_x, f_y; z) = e^{\,ikz}\,\exp\!\big(-i\pi\lambda z\,(f_x^2 + f_y^2)\big).$$
+
+The binomial-truncation phase error at a bin is
+$k|z|\big(1 - \tfrac{s}{2} - \sqrt{1-s}\big) \approx k|z|\,s^2/8$ — reported
+(worst-case over the grid, closed form at the corner bin) as
+`FresnelSamplingReport::max_phase_error_vs_asm` with a `paraxial_ok` flag at
+0.01 rad. **Reported, not enforced**: unlike ASM there is no evanescent
+cutoff in $H_F$; validity is a property of the geometry.
+
+### 6.1 Transfer-function form (`fresnel::propagate`)
+
+Same diagonal structure as ASM: $\mathcal{F}^{-1}\{H_F \cdot \mathcal{F}\{U\}\}$
+on the zero-padded grid, central window extracted. The chirp phase step
+between adjacent frequency bins is separable and its worst case is exact in
+closed form:
+
+$$\Delta\phi_x^{\max} = \pi\lambda|z|\,\delta f_x\,(2f_{\text{nyq},x} - \delta f_x),
+  \qquad \delta f_x = \frac{1}{n_{x,\text{pad}}\Delta x},$$
+
+requiring $\Delta\phi < \pi \Leftrightarrow n_{\text{pad}}\Delta x^2 >
+\lambda|z|$: the **short-distance / coarse-pitch** side of the pair. Strict
+mode mitigates by densification (step $\propto 1/\text{padding}$) before
+`AliasingRisk`, as in ASM.
+
+### 6.2 Convolution form (`fresnel::propagate_convolution`)
+
+Parallel-plane propagation is linear and shift-invariant, so the field is
+the convolution with the impulse response (Green's function — textbook
+Sec. 2.2.2, Ch. 3; Eq. 2.24 kernel reduced to paraxial form):
+
+$$h(x, y; z) = \frac{e^{ikz}}{i\lambda z}\,
+  \exp\!\Big(i\pi\frac{x^2 + y^2}{\lambda z}\Big).$$
+
+The kernel is sampled on the padded grid **in DFT order** (origin at bin
+$(0,0)$; its $x^2$-symmetry makes the Nyquist-bin sign irrelevant) with the
+$\Delta x \Delta y$ quadrature weight folded in, and evaluated as
+$\text{ifft2}(\text{fft2}(u)\cdot\text{fft2}(h))$ — the *exact* discrete
+circular convolution, which is why the NumPy FFT scaling (superseded
+decision above) is required: under unitary scaling the theorem carries a
+$\sqrt{N}$ factor. Here the kernel's chirp is sampled in *space*: the worst
+adjacent-sample phase step is
+
+$$\Delta\phi^{\text{kernel}}_x = \pi(n_{x,\text{pad}} - 1)\Delta x^2 / (\lambda|z|) < \pi
+  \;\Leftrightarrow\; n_{\text{pad}}\Delta x^2 \lesssim \lambda|z|,$$
+
+algebraically the textbook Sec. 2.2 rule (2) $N > D^2/(Z\lambda)$ at the
+padded width — the **long-distance / fine-pitch** side. The two guards are
+reciprocal (their worst steps multiply to $\approx \pi^2$), crossing at
+critical sampling $n_{\text{pad}}\Delta x^2 = \lambda z$ where both equal
+$\approx\pi$. Densification *worsens* kernel sampling, so strict mode raises
+`AliasingRisk` immediately for this form; remedies are a smaller kernel
+extent, coarser pitch, or longer $|z|$.
+
+Both forms share the module-level validation, signed-$z$ semantics
+($h(\cdot,-z) = h(\cdot,z)^*$, $|H_F| = |h|$-based round trips are exact),
+and the embed/pad/extract pipeline.
+
+## 7. Fraunhofer propagation (Phase 2)
+
+When the observation distance is large compared with the source (textbook
+assumption 9), the Fresnel quadratic *inside* the integral becomes
+negligible and the field is the Fourier transform of the aperture function
+(textbook Sec. 2.2, Eq. 2.19) wrapped in an axis-centered chirp:
+
+$$U(x, y; z) = \frac{e^{ikz}}{i\lambda z}\,
+  e^{\,i\pi((x - x_s)^2 + (y - y_s)^2)/(\lambda z)}\,
+  \widetilde{U}_0\!\Big(\frac{x - x_s}{\lambda z}, \frac{y - y_s}{\lambda z}\Big).$$
+
+This is the only propagator that **resamples**: the far-field plane has
+pitch $\Delta X = \lambda|z|/(n_x \Delta x)$ and extent $\lambda|z|/\Delta x$
+(the DFT frequency grid mapped through $x = \lambda z f$); output dims match
+input dims. $z = 0$ is rejected (singular map); negative $z$ mirrors the
+pattern.
+
+- **Regime gate (Fresnel number, half-extent convention).** The dropped
+  interior quadratic is bounded by $\varphi_{\max} = \pi r^2/(\lambda z) =
+  \pi N_F$ at source half-extent $r$, with
+  $$N_F = \frac{r^2}{\lambda|z|} \le \texttt{max\_n\_f}\ (\text{default } 1.0).$$
+  $r$ is the declared `FraunhoferConfig::aperture_extent` when given (the
+  physically relevant source size — e.g. `CircularAperture::radius()`),
+  else the conservative axis-to-window-edge extent. The condition is a
+  property of the *source*, not the sampling window; the declared-extent
+  option (user decision 2026-10-11) prevents small apertures in large
+  windows from being rejected. Strict mode raises
+  `RegimeViolation { report }`; remedies: larger $|z|$, smaller source, or
+  the Fresnel/ASM engines.
+- **Off-axis (`source_pos`).** The chirp and frequency map are measured
+  from the axis; `source_pos: Option<(f64, f64)>` decouples the axis from
+  the grid center. Realized exactly by a unit-modulus input ramp
+  $e^{i2\pi(f_s \xi + g_s \eta)}$, $f_s = x_s/(\lambda z)$ — no
+  interpolation — plus the axis-centered chirp. ASM and Fresnel need no
+  such parameter (translation-invariant operators).
+- **Exact off-bin alignment.** Field sample positions are
+  $(i - \frac{n-1}{2})\Delta$, half-integer multiples of the DFT bin
+  spacing for even $n$; the transform is evaluated through a unit-modulus
+  offset-DFT (pre/post phase factors implementing a $\frac{n-1}{2}$-bin
+  shift), so output samples land at their exact physical frequencies for
+  all parities.
+- **Energy.** Through the offset DFT, Parseval makes the discrete far-field
+  power $\sum|U|^2 \Delta X \Delta Y$ equal the input power exactly
+  (verified at $10^{-9}$).
+
+## 8. Regime guidance (Phase 2)
+
+`propagation::regime` is **diagnostics only** (approved decision — no
+auto-dispatch): `fresnel_number(a, lambda, z)` implements
+$N_F = a^2/(\lambda|z|)$ for a known aperture half-width, and
+`regime_report(_with)(band, z[, aperture])` evaluates, for a geometry:
+$N_F$ (aperture-declared or conservative window), the far-field flag
+($N_F \le 1$), the paraxial angle ($h/|z| \le 0.1$ rad), and both Fresnel
+guards — recommending an engine by the documented ladder:
+
+1. non-paraxial → **ASM** (the only exact model);
+2. far field → **Fraunhofer** (valid, cheapest: one forward transform);
+3. near field paraxial → **Fresnel TF** if its guard holds, else **Fresnel
+   convolution** (guards are complementary, so one nearly always holds);
+4. otherwise → ASM.
+
+Note the guard hierarchy: the rule-2 kernel condition
+($\lambda z > (n-1)\Delta^2$) is *weaker* than far field
+($N_F \le 1 \Leftrightarrow \lambda z \ge r^2$ at window extent, a factor
+$\sim n/4$ stronger) — far field implies kernel-sampled, not conversely.
+
+## 9. Elements: local interaction, propagation decides regimes
 
 An `Element::apply(&BandField)` is a **local** transformation of the sampled
 plane (transmission function multiplication; grid geometry and $\lambda$
@@ -176,12 +308,15 @@ $$\frac{I(v)}{I(0)} = \left[\frac{2 J_1(v)}{v}\right]^2, \qquad
   v = k a \sin\theta \approx \frac{k a r}{z}, \qquad
   v_{\text{first zero}} = 3.8317 \Leftrightarrow r_1 = \frac{1.22\,\lambda z}{2a}.$$
 
-## 7. Validity regime and limitations
+## 10. Validity regime and limitations
 
 - Scalar theory; polarization stays a `Wave`-level property (no vector field
   grids yet).
 - Exact Helmholtz propagation **within the sampled band**: evanescent
   components dropped; transfer-function aliasing guarded as in §5.
+- Fresnel forms (§6) add the paraxial restriction (truncation error
+  reported); Fraunhofer (§7) additionally requires the far-field regime
+  ($N_F \le$ threshold) — the engines enforce or report these per geometry.
 - Wraparound controlled by padding + band-limiting; energy leaving the
   physical window (crop) is lost from the returned field — the validation
   suite sizes grids so this is $\le 10^{-9}$ relative.
@@ -190,16 +325,21 @@ $$\frac{I(v)}{I(0)} = \left[\frac{2 J_1(v)}{v}\right]^2, \qquad
 - Dispersion: $\lambda$ is fixed per `BandField`; dispersive materials enter
   through `Material` closures in later phases.
 
-## 8. Verification mapping (`tests/asm.rs`)
+## 11. Verification mapping (`tests/asm.rs`, `tests/phase2.rs`)
 
-| Test | Physics statement | Analytic anchor | Tolerance |
-|---|---|---|---|
-| 1 | Energy conservation | NumPy-convention scalings cancel in ASM; $\lvert H\rvert = 1$ on band | rel. power $\le 10^{-9}$ |
-| 2 | Plane-wave invariance | single spectral bin gains $e^{ikz}$ | $10^{-6}$ |
-| 3 | Tilted plane wave | ramp slope $k\alpha$, $\alpha = \lambda f_x$ | $10^{-6}$ |
-| 4 | Airy far field | FT of circular aperture, $N_F = 0.05$ | profile $\le 2\%$ of peak; $r_1$ $\le 2\%$ |
-| 5 | Sampling guard | worst step $\approx 19$ rad $> \pi$; mitigation $\propto 1/$padding | exact variant match |
-| 6 | Round trip $+z/-z$ | $H \cdot H^* = 1$ on pass band | rel. Frobenius $< 10^{-6}$ |
+| # | Test | Physics statement | Analytic anchor | Tolerance |
+|---|---|---|---|---|
+| 1 | Energy conservation | NumPy scalings cancel in ASM; $\lvert H\rvert = 1$ on band | discrete power invariant | rel. power $\le 10^{-9}$ |
+| 2 | Plane-wave invariance | single spectral bin gains only a phase | $e^{ikz}$ (Eqs. 3.5–3.13) | $10^{-6}$ |
+| 3 | Tilted plane wave | ramp slope unchanged by propagation | $k\alpha$, $\alpha = \lambda f_x$ | $10^{-6}$ |
+| 4 | Airy far field (ASM) | FT of circular aperture at $N_F = 0.05$ | $[2J_1(v)/v]^2$; $r_1 = 1.22\lambda z/2a$ | profile $\le 2\%$ of peak; $r_1$ $\le 2\%$ |
+| 5 | Sampling guard | undersampled chirp detected, mitigated, or raised | worst step $\approx 19$ rad $> \pi$; $\propto 1/$padding | exact variant match |
+| 6 | Round trip $+z/-z$ | $H \cdot H^* = 1$ on pass band | identity | rel. Frobenius $< 10^{-6}$ |
+| 7 | Gaussian beam $q(z)$ | ASM and Fresnel TF agree with the paraxial beam solution and each other | $w(z)$, $w_0/w$, Gouy $\arctan(z/z_R)$ | $10^{-3}$ |
+| 8 | Straight edge | near-field edge diffraction (Fresnel zones) | $I(u)=\tfrac12[(\tfrac12-C)^2+(\tfrac12-S)^2]$ | $2.5\%$ of $I_0$ |
+| 9 | Rectangular aperture | far field of a rect | $\operatorname{sinc}^2(\pi W x/\lambda z)$ | $3\%$ of peak |
+| 10 | Airy three engines | regime-complementary engines vs one anchor | $[2J_1(v)/v]^2$ at $N_F = 0.05$; TF-guard-fails/kernel-holds asserted | $2\%$–$3\%$ |
+| 11 | Regime ladder | recommendations are executable | engine choice per §8 ladder | propagates cleanly |
 
 ## References
 

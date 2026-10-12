@@ -2,8 +2,11 @@
 //!
 //! Wave-optics propagation engine for designing and analyzing diffractive
 //! optical elements: scalar complex fields sampled on 2D grids, advanced
-//! through free space with the **Angular Spectrum Method** (exact within the
-//! sampled band — no paraxial approximation), and transformed locally by
+//! through free space with selectable engines — exact **Angular Spectrum**
+//! (`propagation::asm`), paraxial **Fresnel** in transfer-function and
+//! convolution forms (`propagation::fresnel`), and the **Fraunhofer**
+//! far-field limit (`propagation::fraunhofer`) — with sampling guards,
+//! regime diagnostics (`propagation::regime`), and locally acting
 //! [`element::Element`]s (apertures, and in later phases lenses, phase
 //! masks, DOEs, gratings).
 //!
@@ -26,10 +29,13 @@
 //!   depending on field types, never the reverse.
 //! - **Numerics:** FFT sign/normalization/bin-order conventions are pinned
 //!   in `propagation::fft` docs and unit tests before dependent code.
-//! - **Sampling safety:** propagators expose and enforce spatial-sampling
-//!   criteria (see [`propagation::asm::sampling_report`]); undersampled
-//!   transfers are mitigated automatically before an
-//!   [`propagation::asm::PropagationError::AliasingRisk`] is raised.
+//! - **Sampling safety:** every propagator exposes and enforces
+//!   spatial-sampling criteria (`propagation::asm::sampling_report`,
+//!   `propagation::fresnel::sampling_report`,
+//!   `propagation::fraunhofer::regime_report`); undersampled transfers are
+//!   mitigated automatically where possible before an
+//!   `AliasingRisk`/`RegimeViolation` is raised, and `propagation::regime`
+//!   recommends an engine per geometry.
 //!
 //! ## Quick start
 //!

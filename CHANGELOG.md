@@ -205,6 +205,14 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   (edge-test pitch set by that criterion), and the Fresnel **TF** form is
   legitimately unusable at the Airy distance ($\lambda z \gg n\Delta^2$):
   the test asserts TF-guard-fails/kernel-guard-holds complementarity.
+- Phase-2 documentation (task 7): `docs/physics.md` gains §6 Fresnel
+  (both forms, reciprocal guards, critical sampling), §7 Fraunhofer (regime
+  gate with half-extent convention, `source_pos`, `aperture_extent`, offset
+  DFT, Parseval power), §8 regime-guidance ladder, and the validation table
+  extended to eleven tests; `docs/architecture.md` updated (module map with
+  all engines, uniform API shape, boxed-report error taxonomy, data flow
+  with regime diagnostics, Phase-2 roadmap marked complete); crate docs in
+  `lib.rs` list all engines and their safety surfaces.
 
 ### Changed
 
