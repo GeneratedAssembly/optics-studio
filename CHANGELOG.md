@@ -183,6 +183,28 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   near-field → Fresnel transfer; large angle and $z=0$ → ASM; guard
   complementarity across the rule-2 crossover $\lambda z = (n-1)d^2$;
   window-vs-aperture conservatism; Display roundtrip.
+- Phase-2 physical validation suite (`tests/phase2.rs` + shared
+  `tests/common/mod.rs`, task 6) — five analytics-based integration tests,
+  all passing:
+  1. Gaussian beam $q(z)$ analytics (width $w(z)=w_0\sqrt{1+(z/z_R)^2}$,
+     on-axis amplitude $w_0/w$, Gouy phase $-\arctan(z/z_R)$) for ASM and
+     Fresnel TF to $10^{-3}$, plus ASM-vs-Fresnel cross-model consistency.
+  2. Straight-edge diffraction vs the Fresnel-integral profile
+     $I(u)=\tfrac12[(\tfrac12-C)^2+(\tfrac12-S)^2]$, $u=x\sqrt{2/\lambda z}$,
+     to 2.5% of $I_0$ — $C,S$ by cumulative quadrature in-test.
+  3. Rectangular aperture far field vs $\operatorname{sinc}^2$ via the
+     Fraunhofer engine (with `aperture_extent` declared) to 3% of peak.
+  4. Airy profile $[2J_1(v)/v]^2$ at $N_F = 0.05$ across three engines —
+     Fraunhofer (3%), Fresnel **convolution** (2%), ASM (2%) — with the
+     analytic averaged over each profile pixel (matched averaging;
+     bin-center evaluation of the steep Airy core is biased).
+  5. Regime-ladder smoke: `regime`'s recommended engine propagates each
+     validated geometry cleanly.
+  Validation surfaced two regime facts now asserted in the suite: fringe
+  structure requires the grid to resolve angles $f \approx x/(\lambda z)$
+  (edge-test pitch set by that criterion), and the Fresnel **TF** form is
+  legitimately unusable at the Airy distance ($\lambda z \gg n\Delta^2$):
+  the test asserts TF-guard-fails/kernel-guard-holds complementarity.
 
 ### Changed
 
