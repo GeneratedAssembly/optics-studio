@@ -7,6 +7,12 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+Phase 3: thin element library — unified apertures (`EllipticalAperture`
+with the circle special case, `RectangularAperture`), `ThinLens` with
+dispersive $f(\lambda)$ closure, `PhaseMask` DOE interface, `BlazedGrating`
+with Fraunhofer-engine order validation, uniform element orientation — plus
+the `sources` module (Gaussian beam initializer).
+
 ### Decisions (roadmap revision, 2026-10-12, user)
 
 - Roadmap re-sequenced: **Phase 3** thin element library + Gaussian

@@ -1,20 +1,24 @@
 # Architecture — `optics-rs`
 
 Module map, data flow, trait specs, and error taxonomy for the Diffractive
-Optics Engineering Suite (Phase 1: field representation + ASM propagation).
+Optics Engineering Suite (Phases 1–3: field representation, ASM/Fresnel/
+Fraunhofer propagation + regime guidance, thin element library, `sources`
+initializers).
 The physics rationale lives in [`physics.md`](physics.md); development
 protocol in [`../agents.md`](../agents.md).
 
 ## 1. Dependency direction
 
 ```
-                    common  (Angle, J)
-                      ↑
+                     common  (Angle, J)
+                       ↑
         wave ─────────┤          (scalar source/beam records)
                       │
         field ────────┼          (pure data grids: Field, BandField)
                       │
         element ──────┼──→ field (local transformations of BandField)
+                      │
+        sources ──────┼──→ field (closed-form initializers → BandField)
                       │
         propagation ──┴──→ field (algorithms over BandField)
             ├── fft        (private layer: rustfft wrapper, conventions)
@@ -63,22 +67,71 @@ transmission function onto the sampled plane; grid dimensions, pitch, and
 wavelength are preserved. An element never resamples or propagates — the
 Fresnel/Fraunhofer regime of the downstream pattern is judged by the Fresnel
 number $N_F = a^2/(\lambda z)$ at propagation time (see `physics.md` §9), so
-elements expose footprint half-extents (`EllipticalAperture::semi_axes`,
-`EllipticalAperture::radius`, `RectangularAperture::half_width`, and the
-conservative `Element::extent`) for Phase 2+ regime guidance. `OpticsError`
-validates geometry in **footprint half-extents** shared by all aperture
-shapes.
+elements expose footprint half-extents (concrete accessors plus the
+conservative `Element::extent`) for regime guidance. `OpticsError`
+validates geometry in **footprint half-extents** shared by all shapes.
 
-Apertures (hard-edge binary masks, boundary-inclusive; footprints exceeding
-the grid are rejected with `OutsideField`): `EllipticalAperture` — semi-axes
-$(a, b)$, with the **circle as the axis-symmetric special case**
-(`EllipticalAperture::circle`, `radius() -> Option<f64>`; task-b decision
-2026-10-12 superseded the former `CircularAperture`), and
-`RectangularAperture` — half-widths $(a, b)$. `shape`/`kind`/`material`/
-`extent` accessors are taxonomy metadata; `material` is unused by the
-hard-edge masks (reserved for refractive/absorptive models).
+**Uniform orientation (task 3.e.1).** Every concrete element stores an
+effective `Angle` ψ (CCW about $z$ viewed from downstream; module docs) and
+evaluates pattern *and* stop in the element frame
+$\mathbf{r}' = R(-\psi)(\mathbf{r} - \mathbf{c})$ — shared helpers
+`to_element_frame` / `rotated_box` plus `ClearAperture::{contains_at,
+footprint_at, axis_halves_at}`. Constructors take `Option<Angle>` where a
+typical orientation exists (apertures, lens, mask — `None` = normal to $z$,
+axes aligned) and a mandatory `Angle` for the `BlazedGrating` vector;
+finiteness is validated via `resolve_orientation` (`InvalidOrientation`).
+`Angle` wraps implicitly into $[0, 2\pi)$ and derives `PartialEq`;
+non-finite wraps to NaN and is rejected by constructors. Mirrors (Phase 6)
+must adopt the same pattern. Rotated non-circular stops report bounding-box
+half-extents in `OutsideField`.
 
-### 2.3 `propagation` — engines
+Concrete elements (physics: `physics.md` §9.1–9.4):
+
+- `EllipticalAperture` — hard-edge binary mask, semi-axes $(a, b)$, with the
+  **circle as the axis-symmetric special case** (`circle()`,
+  `radius() -> Option<f64>`; task-b decision 2026-10-12 superseded the former
+  `CircularAperture`), and `RectangularAperture` — half-widths $(a, b)$.
+- `ThinLens` — quadratic phase screen with **dispersive focal closure**
+  $f(\lambda)$ (decision D1) inside a `ClearAperture` stop (task-c revision;
+  `ClearAperture::Field` = field-wide special case reporting
+  `Unbounded` shape/extent); `new(f, orientation, aperture, center)` +
+  `fixed(f0, ...)` sugar; `focal_at(lambda)`; `worst_phase_step(band)`
+  closed-form $O(1)$ sampling diagnostic (reported, not enforced).
+- `PhaseMask` — the DOE interface (decision D2): analytic closure
+  $(x', y') \mapsto \varphi$ in **center-relative element-frame**
+  coordinates (translation-invariant designs), stop = `ClearAperture`
+  (task-d shared enum: `Field | Circle | Ellipse | Rectangle` —
+  "we can't square a circle"); `kind = Diffractive`; first non-finite
+  closure value raises `InvalidPhase { x, y, phase }`; no sampling guard
+  (caller-side Nyquist duty documented); sampled-profile variant deferred
+  to Phase 5. `phase_at` probes take element-frame coordinates.
+- `BlazedGrating` — sawtooth phase $\varphi = \Phi(((\mathbf{r}-\mathbf{c})
+  \cdot\hat g/\Lambda) \bmod 1)$ with period $\Lambda$, depth $\Phi$,
+  mandatory vector orientation ψ, `ClearAperture` stop; `kinoform()` sugar
+  ($\Phi = 2\pi$); `worst_phase_step` ramp bound for period-Nyquist checks.
+
+`shape`/`kind`/`material`/`extent` accessors are taxonomy metadata;
+`material` is unused by the hard-edge/phase models (index-1 placeholders,
+reserved for refractive/absorptive and thick models in Phase 6).
+
+### 2.3 `sources` — field initializers
+
+Closed-form paraxial solutions sampled onto a grid and bound to a
+wavelength, returning `BandField`s (decision D3: top-level module,
+multiband by construction — a source is a collection of `BandField`s).
+First initializer: `GaussianBeam` parameter record (`w0`, `amplitude`,
+`center`; SI meters, **no longitudinal position** — the signed
+waist-to-plane distance `z` is a sampling argument, per task-a review
+"position is a system property") and
+`gaussian(&beam, z, lambda, nx, ny, dx, dy) -> Result<BandField,
+SourcesError>` in the $e^{+ikz}$ $q$-form ($q = z - iz_R$; physics:
+`physics.md` §9.5). `beam_radius(z, lambda)` / `gouy_phase(z, lambda)`
+are explicit functions of the measurement plane. Sign conventions are
+pinned by cross-checks against the crate's own engines (unit tests).
+`SourcesError`: `InvalidBeam` / `InvalidPlane { z }` diagnostics plus
+transparent `FieldError` carry.
+
+### 2.4 `propagation` — engines
 
 - `fft` (private): NumPy-convention 2D transforms (unnormalized forward,
   $1/N$ inverse — exact circular convolution theorem) over row-major buffers via
@@ -126,7 +179,8 @@ reverse, and never on `element` (composition is caller-side — see §3).
 ## 3. Data flow
 
 ```
-Wave (source params) ──Phase 5──→ Field ──bind λ──→ BandField
+GaussianBeam (beam record) ──sources::gaussian──→ BandField (grid + λ)
+Wave (source params) ──────Phase 5────────→ Field ──bind λ──→ BandField
                                                         │
                           Element::apply (mask, phase)  │  local, at a plane
                                                         ↓
@@ -159,7 +213,8 @@ proactively via the `*_report` functions.
 | Type | Module | Variants |
 |---|---|---|
 | `FieldError` | `field` | `EmptyGrid`, `DimensionMismatch { len, expected }`, `NonPositivePitch { dx, dy }`, `NonPositiveWavelength(λ)`, `NonFiniteSample` |
-| `OpticsError` | `element` | `InvalidAperture { radius, center }`, `OutsideField { radius, center, half-extents }` |
+| `OpticsError` | `element` | `InvalidAperture { half_x, half_y, center_x, center_y }` (footprint half-extents, all shapes), `OutsideField { …, grid_half_x, grid_half_y }` (bounding box for rotated stops), `InvalidAxis { center_x, center_y }`, `InvalidFocal { lambda, f }`, `InvalidPhase { x, y, phase }` (first non-finite closure value, element-frame position), `InvalidGrating { period, depth, orientation }`, `InvalidOrientation { radians }` |
+| `SourcesError` | `sources` | `InvalidBeam { w0, amplitude, cx, cy }`, `InvalidPlane { z }`, `Field(#[from] FieldError)` (transparent grid/wavelength carry) |
 | `PropagationError` | `propagation::asm` | `InvalidDistance(z)` (non-finite only — signed z is valid), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `AliasingRisk { report: Box<SamplingReport> }` |
 | `FresnelError` | `propagation::fresnel` | same taxonomy; `AliasingRisk { report: Box<FresnelSamplingReport> }` (TF form: post-mitigation failure; convolution form: immediate kernel failure) |
 | `FraunhoferError` | `propagation::fraunhofer` | `InvalidDistance(z)` (non-finite **or zero** — far-field map singular at z=0), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `RegimeViolation { report: Box<FraunhoferReport> }` |
@@ -178,11 +233,18 @@ one propagation-level type is a later API decision.
   step = sweep maximum, complementarity, critical-sampling TF-vs-convolution
   agreement $<10^{-6}$, delta = sampled kernel), Fraunhofer (delta prefactor
   identity, DC concentration, Parseval power, regime gate, off-axis ramp),
-  regime ladder outcomes, element mask geometry.
-- **Physical validation** (`tests/asm.rs`, `tests/phase2.rs`; shared
-  analytics in `tests/common/mod.rs` — dependency-free quadrature for
-  $J_1$, Fresnel integrals): eleven analytics-based integration tests with
-  stated tolerances — see the mapping table in `physics.md` §11.
+  regime ladder outcomes, element mask geometry, thin-lens Fourier property +
+  dispersive closure + DOE-lens-equals-thin-lens sample-exact, grating sawtooth
+  wrap + integer-$2\pi$ depth = tilted plane wave, `ClearAperture` predicates,
+  uniform orientation (defaults/validation/rotated stops/bounding box), `Angle`
+  $[0,2\pi)$ wrapping, Gaussian $q$-form cross-engine agreement + $u(-z)$
+  conjugate.
+- **Physical validation** (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`;
+  shared analytics in `tests/common/mod.rs` — dependency-free quadrature for
+  $J_1$, Fresnel integrals): fourteen analytics-based integration tests with
+  stated tolerances — see the mapping table in `physics.md` §11. `tests/phase3.rs`
+  validates grating orders through the Fraunhofer engine (kinoform 2π→+1,
+  4π→+2, π→40/40 split).
 - Gates: `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`,
   `cargo doc` (docstring/unit-documentation standard).
 
@@ -193,10 +255,14 @@ one propagation-level type is a later API decision.
   convolution propagators with reciprocal guards, Fraunhofer limit with
   regime gate, off-axis `source_pos`, declared `aperture_extent`, and
   diagnostics-only regime guidance.
-- **Phase 3** (element library, thin): rectangular/elliptical apertures,
-  thin lens with dispersive focal length $f(\lambda)$, general analytic
-  phase-mask/DOE interface, grating; plus `sources` field initializers
-  (Gaussian beam) pulled forward as PSF prerequisites.
+- **Phase 3** (element library, thin) — **implemented (tasks a–e.1),
+  release decision pending**: `sources` Gaussian initializer; apertures
+  unified into `EllipticalAperture` (circle special case) +
+  `RectangularAperture` (breaking); `ThinLens` with dispersive $f(\lambda)$
+  closure + `ClearAperture` stop; `PhaseMask` analytic-closure DOE interface
+  (center-relative, shared `ClearAperture`); `BlazedGrating` with
+  Fraunhofer-engine order validation; uniform element orientation with
+  implicit-wrapping `Angle` (breaking).
 - **Phase 4** (Rayleigh–Sommerfeld): direct-integral/convolution form,
   cross-model consistency vs ASM/Fresnel.
 - **Phase 5** (sources & output): multimode/HG/LG initializers,

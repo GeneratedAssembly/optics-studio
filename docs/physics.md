@@ -1,8 +1,10 @@
 # Physics — Wave-Optics Propagation in `optics-rs`
 
 This document details the mathematical models, transfer functions, and
-validity regimes implemented in Phases 1–2 (ASM exact; Fresnel transfer-
-function and convolution forms; Fraunhofer far field; regime guidance).
+validity regimes implemented in Phases 1–3 (ASM exact; Fresnel transfer-
+function and convolution forms; Fraunhofer far field; regime guidance; thin
+elements — apertures, dispersive thin lens, phase-mask DOE interface, blazed
+grating — and the Gaussian-beam source).
 The ultimate source of truth is
 *Diffractive Optics: Design, Fabrication, and Test* (SPIE TT95, the textbook
 PDF at the repository root); references below use its numbering.
@@ -308,6 +310,134 @@ $$\frac{I(v)}{I(0)} = \left[\frac{2 J_1(v)}{v}\right]^2, \qquad
   v = k a \sin\theta \approx \frac{k a r}{z}, \qquad
   v_{\text{first zero}} = 3.8317 \Leftrightarrow r_1 = \frac{1.22\,\lambda z}{2a}.$$
 
+### 9.1 Orientation convention (Phase 3, task 3.e.1)
+
+Every element carries one in-plane rotation $\psi$ about the optical axis
+$z$: **positive $\psi$ is counterclockwise viewed from downstream** —
+looking back along $-z$ against the oncoming beam, $+x$ right, $+y$ up
+(right-hand rule about $+z$, the propagation direction); viewed from
+upstream along $+z$ the same rotation appears clockwise. Pattern *and*
+stop are defined in the element frame
+
+$$\mathbf{r}' = R(-\psi)(\mathbf{r} - \mathbf{c}), \qquad
+  R(\psi) = \begin{pmatrix}\cos\psi & -\sin\psi\\ \sin\psi & \cos\psi\end{pmatrix},$$
+
+so rotating the element rotates its transmission function together with
+its clear aperture. Elements with a *typical* orientation (flat, normal to
+$z$, intrinsic axes aligned with the lab axes) accept `Option<Angle>`
+(`None` $\equiv \psi = 0$); the grating-vector direction is intrinsic
+design data, so `BlazedGrating` takes a mandatory `Angle`. `Angle` wraps
+implicitly into $[0, 2\pi)$; non-finite orientations are rejected by the
+constructors (`InvalidOrientation`). Mirrors (not yet implemented) must
+adopt the same pattern. Orientation is purely in-plane — oblique
+incidence-angle dependence remains deferred.
+
+### 9.2 Thin lens (Phase 3, task c)
+
+An ideal thin lens is a pure phase screen, in the element frame,
+
+$$t(x, y) = \exp\!\Big(-\,i\,\frac{2\pi}{\lambda}\,\frac{\rho^2}{2 f(\lambda)}\Big),
+  \qquad \rho^2 = x'^2 + y'^2,$$
+
+with converging $f > 0$ carrying the **negative quadratic** in this crate's
+$e^{+ikz}$ forward-propagation frame — the same convention as the
+converging curvature of `sources` (§9.5). Textbook construction (Sec. 4.2.1):
+a plane wave must gain $2\pi$ of phase at the zone radii
+$r_p^2 = 2fp\lambda$ (Eq. 4.13, from Eq. 4.12 dropping $(p\lambda)^2 \ll f^2$)
+to focus at $f$ — exactly this quadratic; the wrapped kinoform version of the
+profile is a `PhaseMask` closure (§9.3). The focal length is a **dispersive
+closure $f(\lambda)$** (decision D1): refractive glass has power
+$\propto (n-1)c$ with $n$ higher at blue, so $f$ shortens at blue
+(Sec. 4.1.3); a diffractive surface keeps $f \propto \lambda$ at fixed
+phase. Both are just closures — the lens API does not change. The
+`ClearAperture` stop (task-c revision) bounds the footprint and drives
+regime gating through the lens's own half-extent; `ClearAperture::Field`
+reproduces the field-wide phase screen.
+
+**Fourier property (validated).** A Gaussian waist $w_0$ at the lens plane,
+acted on by the lens and propagated exactly $f$, focuses to the
+transform-limited waist $w_0' = \lambda f/(\pi w_0)$ with on-axis amplitude
+scaling $w_0/w_0'$ — verified to 1% through both ASM and Fresnel
+convolution (`focal_plane_reproduces_fourier_property`).
+`worst_phase_step(band)` reports $\frac{k\delta}{|f|}\big(r - \frac{\delta}{2}\big)$
+($r$ = farthest acting coordinate along the measured axis) as a closed-form
+$O(1)$ sampling diagnostic — reported, not enforced (elements stay local).
+
+### 9.3 Phase mask — the DOE interface (Phase 3, task d)
+
+`PhaseMask` paints an analytic closure $\varphi: (x', y') \mapsto$ radians
+(**center-relative element-frame** coordinates, so DOE designs are
+translation-invariant) as $t = e^{i\varphi}$ inside a shared
+`ClearAperture` stop; `kind = Diffractive`. The quadratic closure is the
+Sec. 4.2.1 DOE lens and equals `ThinLens` sample-exactly (validated).
+There is **no engine-side sampling guard**: an arbitrary profile admits no
+closed-form worst step, and $O(N^2)$ warning sweeps are against project
+guidelines — the caller-side Nyquist duty is $|\nabla\varphi|\cdot\delta < \pi$.
+The first non-finite closure value raises
+`InvalidPhase { x, y, phase }` with its element-frame position. The
+sampled-profile variant (inverse design output) arrives with Phase 5 (D2).
+
+### 9.4 Blazed grating and diffraction orders (Phase 3, task e)
+
+Sawtooth phase screen with period $\Lambda$, depth $\Phi$ (radians per
+period), and grating-vector direction $\hat g = (\cos\psi, \sin\psi)$:
+
+$$\varphi(x, y) = \Phi \cdot \Big(\frac{(\mathbf{r}-\mathbf{c})\cdot\hat g}{\Lambda} \bmod 1\Big).$$
+
+Textbook Eq. 2.25 is exactly this linear phase of slope $\Phi/\Lambda$ in
+one period (the depth-to-phase relation $\Phi = 2\pi(n-1)d/\lambda$ is
+fabrication-side). Periodic structure $\Rightarrow$ discrete orders at the
+grating angles
+
+$$\Lambda \sin\theta_m = m\lambda \qquad \text{(Eqs. 1.1, 2.26, 5.1)},$$
+
+with efficiencies the squared Fourier coefficients
+$\eta_m = \operatorname{sinc}^2(\pi(k - m))$, $k = \Phi/(2\pi)$ (Eq. 2.27).
+An **integer-$2\pi$ depth** ($k = m$ integer) puts *all* power into order
+$m$ — the kinoform blaze (Sec. 2.4.2: $\eta = 1$ while depth $\ll$ period;
+shadowing degrades it as depth approaches $\Lambda$, Sec. 2.5). On the grid
+this is a kinematic identity, not an approximation: for $\Phi = 2\pi m$ the
+mod-$1$ wrap is invisible and $e^{i\varphi}$ is **exactly** the tilted
+plane wave $e^{i 2\pi m (x'\cos\psi + y'\sin\psi)/\Lambda}$, so the uniform-
+illumination far field is the pure order $m$ at $\sin\theta_m = m\lambda/\Lambda$.
+
+Validated through the Fraunhofer engine (`tests/phase3.rs`, §11 rows
+12–14): $\Phi = 2\pi$ concentrates $>85\%$ in the order $+1$ lobe at
+$x_1 = \lambda z/\Lambda$ with $<3\%$ leakage to orders $0/-1$;
+$\Phi = 4\pi$ steers $>80\%$ into order $+2$ at $x_2 = 2\lambda z/\Lambda$;
+$\Phi = \pi$ splits $\approx 40/40$ between orders $0$ and $+1$ with order
+$-1$ weak — matching $|c_m|^2 = 4/(\pi^2(1-2m)^2)$.
+`worst_phase_step(band)` $= \frac{\Phi}{\Lambda}\max(|\cos\psi|\Delta x,
+|\sin\psi|\Delta y)$ (ramp bound; $\Phi = 2\pi$, $\psi = 0$ gives the
+period-Nyquist $\Delta x < \Lambda/2$). Full rotated-order and binary-
+amplitude coverage is deferred with the corresponding features (task-e
+decision 2026-10-12).
+
+### 9.5 Gaussian beam source (Phase 3, task a)
+
+`sources::gaussian` samples the paraxial fundamental mode in the $q$-form
+adapted to this crate's $e^{+ikz}$ convention (Siegman/Goodman; the project
+textbook uses Gaussian beams only as beam-shaper input, Sec. 11.2, and does
+not restate the $q(z)$ solution — hence the pin below):
+
+$$u(\rho; z) = A\,\frac{w_0}{w(z)}\,e^{-\rho^2/w(z)^2}\,
+  e^{\,i k\rho^2/(2R(z))}\,e^{\,i(kz - \zeta(z))},
+  \qquad u \propto e^{\,ik\rho^2/(2q)}, \quad q(z) = z - i z_R,$$
+
+(the conjugate of the usual $e^{-ikz}$-textbook $q = z + iz_R$) with
+$z_R = \pi w_0^2/\lambda$, $w(z) = w_0\sqrt{1 + (z/z_R)^2}$,
+$1/R(z) = z/(z^2 + z_R^2)$ (finite at $z = 0$), $\zeta(z) = \arctan(z/z_R)$.
+$z$ is the **signed waist-to-sampling-plane distance** — a system
+placement argument, not a stored beam property (task-a review): $z = 0$
+samples the waist (pure real Gaussian), $z > 0$ diverging, $z < 0$
+converging, and $u(\rho;-z) = \overline{u(\rho;z)}$; the converging
+($z<0$) curvature is the same-sign convention as the converging thin lens
+of §9.2. Sign conventions (Gouy, curvature) are the historical bug source:
+they are pinned against the crate's own validated engines — Fresnel-TF and
+ASM propagation of a waist beam reproduce the analytic initializer at $z$
+(unit tests; the on-axis phase $kz - \zeta(z)$ was pinned by `tests/phase2.rs`
+test 7).
+
 ## 10. Validity regime and limitations
 
 - Scalar theory; polarization stays a `Wave`-level property (no vector field
@@ -320,12 +450,15 @@ $$\frac{I(v)}{I(0)} = \left[\frac{2 J_1(v)}{v}\right]^2, \qquad
 - Wraparound controlled by padding + band-limiting; energy leaving the
   physical window (crop) is lost from the returned field — the validation
   suite sizes grids so this is $\le 10^{-9}$ relative.
-- Elements are on-axis hard-edge/phase models for now; oblique interaction
-  (incidence-angle dependence) deferred.
-- Dispersion: $\lambda$ is fixed per `BandField`; dispersive materials enter
-  through `Material` closures in later phases.
+- Elements are hard-edge/phase models with centered placement and in-plane
+  orientation (§9.1); oblique interaction (incidence-angle dependence)
+  deferred.
+- Dispersion: $\lambda$ is fixed per `BandField`; thin-lens chromaticity
+  lives in the $f(\lambda)$ closure (§9.2); `Material` $n(\lambda, \text{angle})$
+  closures are reserved for refractive/thick models (Phase 6), and the
+  grating depth-to-phase relation (§9.4) is fabrication-side, not applied.
 
-## 11. Verification mapping (`tests/asm.rs`, `tests/phase2.rs`)
+## 11. Verification mapping (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`)
 
 | # | Test | Physics statement | Analytic anchor | Tolerance |
 |---|---|---|---|---|
@@ -340,12 +473,28 @@ $$\frac{I(v)}{I(0)} = \left[\frac{2 J_1(v)}{v}\right]^2, \qquad
 | 9 | Rectangular aperture | far field of a rect | $\operatorname{sinc}^2(\pi W x/\lambda z)$ | $3\%$ of peak |
 | 10 | Airy three engines | regime-complementary engines vs one anchor | $[2J_1(v)/v]^2$ at $N_F = 0.05$; TF-guard-fails/kernel-holds asserted | $2\%$–$3\%$ |
 | 11 | Regime ladder | recommendations are executable | engine choice per §8 ladder | propagates cleanly |
+| 12 | Kinoform blaze (phase3) | $\Phi = 2\pi$ sawtooth $\to$ pure order $+1$ at $x_1 = \lambda z/\Lambda$ | Eqs. 1.1/2.26/5.1; Sec. 2.4.2, Eq. 2.27 $k=1$ | lobe $\pm 2$ bins; $>85\%$ in order, $<3\%$ leak to $0/-1$ |
+| 13 | Double-depth blaze (phase3) | $\Phi = 4\pi \to$ order $+2$ at $x_2 = 2\lambda z/\Lambda$ | Eq. 2.27 $k=2$ | $>80\%$ in lobe |
+| 14 | Half-wave sawtooth (phase3) | $\Phi = \pi \to \approx 40/40$ split orders $0/+1$, $-1$ weak | $|c_m|^2 = 4/(\pi^2(1-2m)^2)$ | each $0.30$–$0.55$; $f_{-1} < 0.10$ |
+
+Element/source physics additionally pinned by unit tests in `src/element.rs`
+and `src/sources.rs`: thin-lens Fourier property ($w_0' = \lambda f/\pi w_0$,
+1%, ASM + Fresnel convolution), DOE-lens closure = `ThinLens` sample-exact,
+integer-$2\pi$ grating depth = tilted plane wave sample-exact, orientation
+defaults/validation/rotated stops, `Angle` $[0,2\pi)$ wrapping, Gaussian
+$q$-form cross-engine agreement ($<10^{-3}$) and $u(-z) = \overline{u(z)}$.
 
 ## References
 
 1. *Diffractive Optics: Design, Fabrication, and Test* (workspace root PDF):
-   Sec. 1.4 (Huygens, Fresnel zones), Sec. 2.2 (far field = FT of aperture),
-   Eqs. 2.9, 3.5–3.13 (plane-wave basis, direction cosines).
+   Sec. 1.4 (Huygens, Fresnel zones), Eq. 1.1 (grating equation),
+   Sec. 2.2 (far field = FT of aperture), Eqs. 2.9, 3.5–3.13 (plane-wave
+   basis, direction cosines), Sec. 2.4 + Eqs. 2.25–2.29 (blazed grating,
+   order angles and efficiencies), Sec. 2.5 (shadowing), Sec. 4.1.3
+   (chromatic aberration: refractive power $\propto (n-1)c$), Sec. 4.2.1 +
+   Eqs. 4.12–4.13 (diffractive lens = quadratic phase, zone radii
+   $r_p^2 = 2fp\lambda$), Eq. 5.1 (grating equation in design context),
+   Sec. 11.2 (Gaussian beams as beam-shaper input).
 2. N. Matsushima and T. Shimobaba, "Band-limited angular spectrum method for
    numerical simulation of free-space propagation in close and far fields,"
    *Optics Express* **17**(23), 19731–19741 (2009).
@@ -353,3 +502,7 @@ $$\frac{I(v)}{I(0)} = \left[\frac{2 J_1(v)}{v}\right]^2, \qquad
    $[2J_1(v)/v]^2$ for the circular aperture transform (the textbook states
    the far-field-is-the-aperture-FT relation; the explicit $J_1$ form is the
    classical evaluation of that transform).
+4. A. E. Siegman, *Lasers*, and Goodman — paraxial Gaussian beam $q(z)$
+   solution (the project textbook does not restate it; the crate's
+   $e^{+ikz}$ form $q = z - iz_R$ is pinned against its own validated
+   engines, §9.5).
