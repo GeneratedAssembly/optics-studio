@@ -7,6 +7,13 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-12
+
+Phase 4: Rayleigh–Sommerfeld first-kind propagation engine (exact spherical
+impulse response, convolution form, closed-form kernel guard), cross-model
+consistency validation vs ASM/Fresnel with a direct-quadrature reference,
+and Phase-4 documentation.
+
 ### Decisions (approved in planning check-ins, 2026-10-12, Phase 4)
 
 - **Phase 4 scope — RS first kind only**: the exact Kirchhoff integral

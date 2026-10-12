@@ -291,8 +291,8 @@ one propagation-level type is a later API decision.
   (center-relative, shared `ClearAperture`); `BlazedGrating` with
   Fraunhofer-engine order validation; uniform element orientation with
   implicit-wrapping `Angle` (breaking).
-- **Phase 4** (Rayleigh–Sommerfeld) — **implemented (tasks a–b), release
-  decision pending**: `rayleigh_sommerfeld::propagate` first-kind
+- **Phase 4** (Rayleigh–Sommerfeld) — **complete, released as 0.4.0**:
+  `rayleigh_sommerfeld::propagate` first-kind
   convolution engine (exact spherical kernel, closed-form guard, $z=0$
   rejected; second kind excluded — no $\partial u/\partial n$ data model),
   `tests/phase4.rs` cross-model consistency vs ASM/Fresnel with a
