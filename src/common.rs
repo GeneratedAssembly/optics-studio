@@ -16,15 +16,27 @@ pub const J: Complex64 = Complex64::I;
 ///
 /// The newtype prevents accidental mixing of degrees and radians at API
 /// boundaries; `Deref<Target = f64>` exposes the radian value for math.
-#[derive(Clone, Copy, Debug)]
+/// Every constructor and arithmetic op **wraps implicitly** into
+/// $[0, 2\pi)$ (non-finite inputs wrap to NaN and are the caller's to
+/// reject); trig is insensitive, and equal-modulo angles become equal
+/// values. Degree conversion is explicit at the boundary
+/// ([`Angle::from_degrees`], [`Angle::degrees`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Angle {
     radians: f64,
 }
 
+/// Wrap a radian value into $[0, 2\pi)$.
+fn wrap(radians: f64) -> f64 {
+    radians.rem_euclid(2.0 * PI)
+}
+
 impl Angle {
-    /// Angle of `radians` (rad). No range normalization is applied.
+    /// Angle of `radians` (rad), wrapped into $[0, 2\pi)$.
     pub fn new(radians: f64) -> Self {
-        Self { radians }
+        Self {
+            radians: wrap(radians),
+        }
     }
 
     /// Zero angle.
@@ -72,10 +84,10 @@ impl Angle {
         Angle::pi() + Angle::from_degrees(degrees)
     }
 
-    /// Convert `degrees` (deg) to an angle: $180° = \pi$ rad.
+    /// Convert `degrees` (deg) to an angle: $180° = \pi$ rad, wrapped into
+    /// $[0, 2\pi)$.
     pub fn from_degrees(degrees: f64) -> Self {
-        let radians = PI / 180.0 * degrees;
-        Self { radians }
+        Angle::new(PI / 180.0 * degrees)
     }
 
     /// The angle in degrees.
@@ -97,9 +109,7 @@ impl Add for Angle {
     type Output = Angle;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Angle {
-            radians: *self + *rhs,
-        }
+        Angle::new(*self + *rhs)
     }
 }
 
@@ -107,8 +117,41 @@ impl Sub for Angle {
     type Output = Angle;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Angle {
-            radians: *self - *rhs,
+        Angle::new(*self - *rhs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constructors_wrap_into_two_pi() {
+        // Negative and multi-turn inputs wrap to [0, 2pi).
+        assert_eq!(Angle::new(-PI), Angle::pi());
+        assert_eq!(Angle::new(3.0 * PI), Angle::pi());
+        assert_eq!(Angle::new(2.0 * PI), Angle::zero());
+        assert_eq!(Angle::new(-2.0 * PI), Angle::zero());
+        assert_eq!(Angle::new(0.25), Angle::new(0.25));
+        assert_eq!(Angle::from_degrees(-90.0), Angle::from_degrees(270.0));
+        assert_eq!(Angle::from_degrees(360.0), Angle::zero());
+        // Non-finite inputs wrap to NaN (callers reject them).
+        assert!(Angle::new(f64::NAN).is_nan());
+        assert!(Angle::new(f64::INFINITY).is_nan());
+    }
+
+    #[test]
+    fn arithmetic_wraps_and_round_trips() {
+        let a = Angle::new(1.5 * PI);
+        let b = Angle::new(0.5 * PI);
+        assert_eq!(a + b, Angle::zero());
+        assert_eq!(a - b, Angle::pi());
+        assert_eq!(Angle::from_pi(-PI / 2.0), Angle::pi_half());
+        assert_eq!(Angle::from_90(-180.0), Angle::from_degrees(-90.0));
+        // Degree conversion round trip on canonical values.
+        for deg in [0.0, 45.0, 90.0, 180.0, 270.0, 359.0] {
+            let a = Angle::from_degrees(deg);
+            assert!((a.degrees() - deg).abs() < 1e-12);
         }
     }
 }

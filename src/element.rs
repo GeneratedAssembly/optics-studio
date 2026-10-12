@@ -18,13 +18,39 @@
 //! checks (Phase 2+ regime guidance). The Phase 1 ASM propagator is valid in
 //! both regimes and does not need this number.
 //!
-//! All spatial quantities are SI units (meters); angles in radians.
+//! All spatial quantities are SI units (meters); angles are [`Angle`]
+//! (radians).
+//!
+//! # Orientation convention
+//!
+//! An element's `orientation` ψ is its **in-plane rotation about the
+//! optical axis $z$, measured counterclockwise (CCW) when viewed from
+//! downstream — looking back along $-z$ toward the oncoming beam, with
+//! $+x$ to the right and $+y$ up** (right-hand rule about $+z$, the
+//! propagation direction). Viewed from upstream looking along $+z$ (with
+//! the beam), the same positive rotation appears clockwise. The
+//! element's intrinsic frame $(x', y')$ relates to field coordinates by
+//! $\mathbf{r}' = R(-\psi)(\mathbf{r} - \mathbf{c})$ with
+//! $R(\psi) = \begin{pmatrix}\cos\psi & -\sin\psi\\ \sin\psi &
+//! \cos\psi\end{pmatrix}$: patterns (grating vectors, mask closures,
+//! ellipse/rectangle axes) are defined along/within the element frame,
+//! and the clear aperture rotates with the element.
+//!
+//! Elements with a **typical orientation** — flat, normal to $z$, their
+//! intrinsic axes aligned with the lab axes — accept
+//! `Option<Angle>`: `None` *is* that typical orientation (ψ = 0), and
+//! passing `Some(Angle::zero())` behaves identically. Elements whose
+//! direction is intrinsic design data rather than a mounting choice
+//! (the [`BlazedGrating`] grating vector) take a mandatory `Angle`.
+//! Orientation is always exposed by the `orientation()` accessor as the
+//! effective `Angle` (wrapped into $[0, 2\pi)$).
 
 use std::f64::consts::PI;
 
 use num_complex::Complex64;
 use thiserror::Error;
 
+use crate::common::Angle;
 use crate::field::BandField;
 
 /// Errors produced when an element acts on a [`BandField`].
@@ -88,8 +114,8 @@ pub enum OpticsError {
     },
     /// The phase-mask closure returned a non-finite value at a field
     /// coordinate; the reported position is the first offending sample
-    /// (center-relative coordinates, meters).
-    #[error("phase mask returned non-finite value {phase} at ({x}, {y}) m (center-relative)")]
+    /// (element-frame coordinates, meters).
+    #[error("phase mask returned non-finite value {phase} at ({x}, {y}) m (element frame)")]
     InvalidPhase {
         /// Center-relative x of the first offending sample (m).
         x: f64,
@@ -112,6 +138,13 @@ pub enum OpticsError {
         depth: f64,
         /// Grating-vector orientation in radians from the +x axis.
         orientation: f64,
+    },
+    /// The element orientation was not finite. `Angle` wraps implicitly
+    /// into $[0, 2\pi)$, so non-finite inputs arrive here as NaN.
+    #[error("element orientation must be finite (got {radians} rad)")]
+    InvalidOrientation {
+        /// The non-finite orientation value in radians.
+        radians: f64,
     },
 }
 
@@ -311,7 +344,7 @@ impl ClearAperture {
     }
 
     /// Boundary-inclusive containment at center-relative coordinates
-    /// (meters).
+    /// (meters), in the stop's own (unrotated) frame.
     pub fn contains(&self, x: f64, y: f64) -> bool {
         match *self {
             ClearAperture::Field => true,
@@ -321,6 +354,36 @@ impl ClearAperture {
                 b2 * x * x + a2 * y * y <= a2 * b2
             }
             ClearAperture::Rectangle { half_x, half_y } => x.abs() <= half_x && y.abs() <= half_y,
+        }
+    }
+
+    /// As [`ClearAperture::contains`], for the stop rotated by `psi`
+    /// (rad, CCW about z — module docs): center-relative **field**
+    /// coordinates are mapped into the stop frame first.
+    pub fn contains_at(&self, x: f64, y: f64, psi: f64) -> bool {
+        let (fx, fy) = to_element_frame(x, y, psi);
+        self.contains(fx, fy)
+    }
+
+    /// Axis-aligned bounding half-extents of the stop rotated by `psi`;
+    /// `None` for the field-wide stop. A circle is rotation-invariant.
+    fn footprint_at(&self, psi: f64) -> Option<(f64, f64)> {
+        let (hx, hy) = self.footprint()?;
+        match self {
+            ClearAperture::Circle(_) => Some((hx, hy)),
+            _ => Some(rotated_box(hx, hy, psi)),
+        }
+    }
+
+    /// As [`ClearAperture::axis_halves`], for the stop rotated by `psi`.
+    fn axis_halves_at(&self, psi: f64) -> (f64, f64) {
+        match self {
+            ClearAperture::Field => (f64::INFINITY, f64::INFINITY),
+            ClearAperture::Circle(r) => (*r, *r),
+            _ => {
+                let (hx, hy) = self.axis_halves();
+                rotated_box(hx, hy, psi)
+            }
         }
     }
 }
@@ -360,6 +423,33 @@ fn grid_half_extents(band: &BandField) -> (f64, f64) {
     ((nx as f64 - 1.0) / 2.0 * dx, (ny as f64 - 1.0) / 2.0 * dy)
 }
 
+/// Rotate center-relative field coordinates into the element frame:
+/// $\mathbf{r}' = R(-\psi)\mathbf{r}$, with ψ the element orientation
+/// (CCW about $z$ viewed from downstream — module docs).
+fn to_element_frame(x: f64, y: f64, psi: f64) -> (f64, f64) {
+    let (c, s) = (psi.cos(), psi.sin());
+    (c * x + s * y, -s * x + c * y)
+}
+
+/// Axis-aligned bounding half-extents of a $(h_x, h_y)$ box rotated by
+/// `psi` (rad): $h_x' = h_x|\cos| + h_y|\sin|$, $h_y' = h_x|\sin| +
+/// h_y|\cos|$.
+fn rotated_box(hx: f64, hy: f64, psi: f64) -> (f64, f64) {
+    let (c, s) = (psi.cos().abs(), psi.sin().abs());
+    (hx * c + hy * s, hx * s + hy * c)
+}
+
+/// Resolve a constructor's optional orientation: `None` is the typical
+/// orientation of a flat element (ψ = 0: normal to $z$, intrinsic axes
+/// aligned with the lab axes); `Some` must be finite.
+fn resolve_orientation(orientation: Option<Angle>) -> Result<Angle, OpticsError> {
+    let o = orientation.unwrap_or_else(Angle::zero);
+    if !o.is_finite() {
+        return Err(OpticsError::InvalidOrientation { radians: *o });
+    }
+    Ok(o)
+}
+
 /// Validates aperture footprint half-extents and center (shared by all
 /// aperture shapes): both half-extents positive and finite, both center
 /// coordinates finite.
@@ -384,19 +474,21 @@ fn validate_footprint(half_x: f64, half_y: f64, center: (f64, f64)) -> Result<()
 
 /// Ideal hard-edge elliptical aperture: a binary amplitude mask
 ///
-/// $$t(x, y) = \begin{cases} 1 & \displaystyle\frac{(x - x_c)^2}{a^2} +
-/// \frac{(y - y_c)^2}{b^2} \le 1 \\ 0 & \text{otherwise} \end{cases}$$
+/// $$t(x, y) = \begin{cases} 1 & \displaystyle\frac{x'^2}{a^2} +
+/// \frac{y'^2}{b^2} \le 1 \\ 0 & \text{otherwise} \end{cases}
+/// \qquad (x', y') = R(-\psi)\big((x, y) - (x_c, y_c)\big)$$
 ///
-/// with semi-axes $(a, b)$ (m) along $x$, $y$ and center $(x_c, y_c)$ (m) in
-/// field coordinates (origin at the grid center, see [`crate::field`]). A
-/// sample whose coordinate lies exactly on the ellipse boundary is **inside**
+/// with semi-axes $(a, b)$ (m) in the element frame, orientation ψ (CCW
+/// about $z$, module docs), and center $(x_c, y_c)$ (m) in field
+/// coordinates (origin at the grid center, see [`crate::field`]). A sample
+/// whose coordinate lies exactly on the ellipse boundary is **inside**
 /// (transmitted).
 ///
 /// The **circle is the axis-symmetric special case**: construct it with
 /// [`EllipticalAperture::circle`] (or `new` with equal semi-axes), which
 /// reports [`ElementShape::Circle`] and exposes [`EllipticalAperture::radius`]
 /// (approved task-b decision 2026-10-12: one aperture type, no separate
-/// circular element).
+/// circular element). A circle ignores its orientation (invariant).
 ///
 /// # Regime note (Fresnel number)
 ///
@@ -413,26 +505,36 @@ fn validate_footprint(half_x: f64, half_y: f64, center: (f64, f64)) -> Result<()
 // No `Clone`/`Debug`/`PartialEq` derives: the `Material` field holds boxed
 // closures; element identity is by value of its geometry accessors.
 pub struct EllipticalAperture {
-    semi_axes: (f64, f64), // meters: (a, b)
+    semi_axes: (f64, f64), // meters: (a, b) in the element frame
+    orientation: Angle,    // rad, CCW about z (module docs)
     center: (f64, f64),    // meters, field coordinates
     shape: ElementShape,
     material: Material,
 }
 
 impl EllipticalAperture {
-    /// Ideal hard-edge ellipse with semi-axes `semi_axes` $= (a, b)$ (m) and
-    /// center `center` (m, m) in field coordinates.
+    /// Ideal hard-edge ellipse with semi-axes `semi_axes` $= (a, b)$ (m,
+    /// element frame), orientation `orientation` (see the module docs:
+    /// `None` = typical axis-aligned orientation), and center `center`
+    /// (m, m) in field coordinates.
     ///
-    /// Equal semi-axes ($a == b$ exactly) report [`ElementShape::Circle`].
+    /// Equal semi-axes ($a == b$ exactly) report [`ElementShape::Circle`]
+    /// (orientation then irrelevant).
     ///
     /// The stored `material` is metadata for future refractive/absorptive
     /// element models; the hard-edge transmission model is the binary mask
     /// alone.
     ///
     /// # Errors
+    /// [`OpticsError::InvalidOrientation`] for a non-finite `Some` angle;
     /// [`OpticsError::InvalidAperture`] if either semi-axis is not positive
     /// and finite, or either center coordinate is not finite.
-    pub fn new(semi_axes: (f64, f64), center: (f64, f64)) -> Result<Self, OpticsError> {
+    pub fn new(
+        semi_axes: (f64, f64),
+        orientation: Option<Angle>,
+        center: (f64, f64),
+    ) -> Result<Self, OpticsError> {
+        let orientation = resolve_orientation(orientation)?;
         let (a, b) = semi_axes;
         validate_footprint(a, b, center)?;
         let shape = if a == b {
@@ -442,6 +544,7 @@ impl EllipticalAperture {
         };
         Ok(Self {
             semi_axes,
+            orientation,
             center,
             shape,
             // Non-absorbing, index-1 placeholder: unused by the hard-edge mask.
@@ -451,18 +554,23 @@ impl EllipticalAperture {
 
     /// Ideal hard-edge **circle** of radius `radius` (m) centered at `center`
     /// (m, m) — the axis-symmetric special case of [`EllipticalAperture::new`]
-    /// with semi-axes $(r, r)$.
+    /// with semi-axes $(r, r)$; orientation is irrelevant (typical).
     ///
     /// # Errors
     /// [`OpticsError::InvalidAperture`] if `radius` is not positive and
     /// finite, or either center coordinate is not finite.
     pub fn circle(radius: f64, center: (f64, f64)) -> Result<Self, OpticsError> {
-        Self::new((radius, radius), center)
+        Self::new((radius, radius), None, center)
     }
 
-    /// Semi-axes $(a, b)$ in meters (along $x$, $y$).
+    /// Semi-axes $(a, b)$ in meters (element frame).
     pub fn semi_axes(&self) -> (f64, f64) {
         self.semi_axes
+    }
+
+    /// Effective orientation (rad, CCW about $z$; `Angle` wrapped).
+    pub fn orientation(&self) -> Angle {
+        self.orientation
     }
 
     /// Aperture center $(x_c, y_c)$ in meters (field coordinates).
@@ -504,25 +612,32 @@ impl Element for EllipticalAperture {
     }
 
     /// Masks the field with the hard-edge transmission function: samples whose
-    /// physical coordinates fall outside the ellipse are set to zero, all
-    /// others (including the boundary) are passed through unchanged.
+    /// physical coordinates fall outside the (rotated) ellipse are set to
+    /// zero, all others (including the boundary) are passed through
+    /// unchanged.
     ///
     /// The boundary test uses the axis-multiplied form
-    /// $b^2\,\Delta x^2 + a^2\,\Delta y^2 > a^2 b^2$ (no divisions, exactly
-    /// the ellipse inequality).
+    /// $b^2\,x'^2 + a^2\,y'^2 > a^2 b^2$ in the element frame (no
+    /// divisions, exactly the ellipse inequality).
     ///
     /// # Errors
-    /// [`OpticsError::OutsideField`] if the aperture bounding box
-    /// $|x_c| + a >$ half-extent$_x$ or $|y_c| + b >$ half-extent$_y$ does not
-    /// fit inside the grid.
+    /// [`OpticsError::OutsideField`] if the rotated aperture's bounding box
+    /// (module docs) does not fit inside the grid.
     fn apply(&self, band: &BandField) -> Result<BandField, OpticsError> {
         let (a, b) = self.semi_axes;
         let (cx, cy) = self.center;
+        let psi = *self.orientation;
+        // A circle is rotation-invariant; a genuine ellipse bounds a rotated box.
+        let (bx, by) = if a == b {
+            (a, b)
+        } else {
+            rotated_box(a, b, psi)
+        };
         let (grid_half_x, grid_half_y) = grid_half_extents(band);
-        if cx.abs() + a > grid_half_x || cy.abs() + b > grid_half_y {
+        if cx.abs() + bx > grid_half_x || cy.abs() + by > grid_half_y {
             return Err(OpticsError::OutsideField {
-                half_x: a,
-                half_y: b,
+                half_x: bx,
+                half_y: by,
                 center_x: cx,
                 center_y: cy,
                 grid_half_x,
@@ -537,9 +652,8 @@ impl Element for EllipticalAperture {
         for iy in 0..ny {
             for ix in 0..nx {
                 let (x, y) = field.coord(ix, iy);
-                let dxc = x - cx;
-                let dyc = y - cy;
-                if b2 * dxc * dxc + a2 * dyc * dyc > limit {
+                let (fx, fy) = to_element_frame(x - cx, y - cy, psi);
+                if b2 * fx * fx + a2 * fy * fy > limit {
                     *field.sample_mut(ix, iy) = Complex64::ZERO;
                 }
             }
@@ -550,14 +664,17 @@ impl Element for EllipticalAperture {
 
 /// Ideal hard-edge rectangular aperture: a binary amplitude mask
 ///
-/// $$t(x, y) = \begin{cases} 1 & |x - x_c| \le a \;\text{and}\; |y - y_c| \le b
-/// \\ 0 & \text{otherwise} \end{cases}$$
+/// $$t(x, y) = \begin{cases} 1 & |x'| \le a \;\text{and}\; |y'| \le b
+/// \\ 0 & \text{otherwise} \end{cases}
+/// \qquad (x', y') = R(-\psi)\big((x, y) - (x_c, y_c)\big)$$
 ///
-/// with half-widths $(a, b)$ (m) along $x$, $y$ and center $(x_c, y_c)$ (m)
-/// in field coordinates (origin at the grid center, see [`crate::field`]).
+/// with half-widths $(a, b)$ (m) in the element frame, orientation ψ (CCW
+/// about $z$, module docs), and center $(x_c, y_c)$ (m) in field
+/// coordinates (origin at the grid center, see [`crate::field`]).
 /// Samples whose coordinates lie exactly on an edge are **inside**
 /// (transmitted). The full opening is $2a \times 2b$; a square is the
-/// $a == b$ special case (still reported as [`ElementShape::Rectangle`]).
+/// $a == b$ special case (still reported as [`ElementShape::Rectangle`],
+/// and rotating a square DOES change its footprint).
 ///
 /// # Regime note (Fresnel number)
 ///
@@ -570,7 +687,8 @@ impl Element for EllipticalAperture {
 // No `Clone`/`Debug`/`PartialEq` derives: the `Material` field holds boxed
 // closures; element identity is by value of its geometry accessors.
 pub struct RectangularAperture {
-    half_width: (f64, f64), // meters: (a, b)
+    half_width: (f64, f64), // meters: (a, b) in the element frame
+    orientation: Angle,     // rad, CCW about z (module docs)
     center: (f64, f64),     // meters, field coordinates
     shape: ElementShape,
     material: Material,
@@ -578,20 +696,28 @@ pub struct RectangularAperture {
 
 impl RectangularAperture {
     /// Ideal hard-edge rectangle with half-widths `half_width` $= (a, b)$
-    /// (m) and center `center` (m, m) in field coordinates.
+    /// (m, element frame), orientation `orientation` (`None` = typical
+    /// axis-aligned), and center `center` (m, m) in field coordinates.
     ///
     /// The stored `material` is metadata for future refractive/absorptive
     /// element models; the hard-edge transmission model is the binary mask
     /// alone.
     ///
     /// # Errors
-    /// [`OpticsError::InvalidAperture`] if either half-width is not positive
-    /// and finite, or either center coordinate is not finite.
-    pub fn new(half_width: (f64, f64), center: (f64, f64)) -> Result<Self, OpticsError> {
+    /// [`OpticsError::InvalidOrientation`] for a non-finite `Some` angle;
+    /// [`OpticsError::InvalidAperture`] if either half-width is not
+    /// positive and finite, or either center coordinate is not finite.
+    pub fn new(
+        half_width: (f64, f64),
+        orientation: Option<Angle>,
+        center: (f64, f64),
+    ) -> Result<Self, OpticsError> {
+        let orientation = resolve_orientation(orientation)?;
         let (a, b) = half_width;
         validate_footprint(a, b, center)?;
         Ok(Self {
             half_width,
+            orientation,
             center,
             shape: ElementShape::Rectangle,
             // Non-absorbing, index-1 placeholder: unused by the hard-edge mask.
@@ -599,10 +725,15 @@ impl RectangularAperture {
         })
     }
 
-    /// Half-widths $(a, b)$ in meters (along $x$, $y$); full opening
+    /// Half-widths $(a, b)$ in meters (element frame); full opening
     /// $2a \times 2b$.
     pub fn half_width(&self) -> (f64, f64) {
         self.half_width
+    }
+
+    /// Effective orientation (rad, CCW about $z$; `Angle` wrapped).
+    pub fn orientation(&self) -> Angle {
+        self.orientation
     }
 
     /// Aperture center $(x_c, y_c)$ in meters (field coordinates).
@@ -632,21 +763,22 @@ impl Element for RectangularAperture {
     }
 
     /// Masks the field with the hard-edge transmission function: samples
-    /// outside the axis-aligned box are set to zero, all others (including
+    /// outside the (rotated) box are set to zero, all others (including
     /// the edges) are passed through unchanged.
     ///
     /// # Errors
-    /// [`OpticsError::OutsideField`] if the rectangle footprint
-    /// $|x_c| + a >$ half-extent$_x$ or $|y_c| + b >$ half-extent$_y$ does not
-    /// fit inside the grid.
+    /// [`OpticsError::OutsideField`] if the rotated rectangle's bounding
+    /// box (module docs) does not fit inside the grid.
     fn apply(&self, band: &BandField) -> Result<BandField, OpticsError> {
         let (a, b) = self.half_width;
         let (cx, cy) = self.center;
+        let psi = *self.orientation;
+        let (bx, by) = rotated_box(a, b, psi);
         let (grid_half_x, grid_half_y) = grid_half_extents(band);
-        if cx.abs() + a > grid_half_x || cy.abs() + b > grid_half_y {
+        if cx.abs() + bx > grid_half_x || cy.abs() + by > grid_half_y {
             return Err(OpticsError::OutsideField {
-                half_x: a,
-                half_y: b,
+                half_x: bx,
+                half_y: by,
                 center_x: cx,
                 center_y: cy,
                 grid_half_x,
@@ -659,7 +791,8 @@ impl Element for RectangularAperture {
         for iy in 0..ny {
             for ix in 0..nx {
                 let (x, y) = field.coord(ix, iy);
-                if (x - cx).abs() > a || (y - cy).abs() > b {
+                let (fx, fy) = to_element_frame(x - cx, y - cy, psi);
+                if fx.abs() > a || fy.abs() > b {
                     *field.sample_mut(ix, iy) = Complex64::ZERO;
                 }
             }
@@ -703,6 +836,7 @@ impl Element for RectangularAperture {
 // hold boxed functions; element identity is by value of its accessors.
 pub struct ThinLens {
     f: Box<dyn Fn(f64) -> f64>, // focal length (m) as a function of wavelength (m)
+    orientation: Angle,         // rad, CCW about z; only the stop depends on it
     aperture: ClearAperture,    // stop geometry, meters from center
     center: (f64, f64),         // optical axis, meters, field coordinates
     shape: ElementShape,
@@ -710,26 +844,32 @@ pub struct ThinLens {
 }
 
 impl ThinLens {
-    /// Thin lens with focal closure `f` of wavelength (m), clear aperture
-    /// `aperture` (see [`ClearAperture`]), and optical axis at `center`
-    /// (m, m) in field coordinates.
+    /// Thin lens with focal closure `f` of wavelength (m), `orientation`
+    /// (`None` = typical: normal to $z$; the quadratic phase is rotation-
+    /// symmetric, so only a non-circular `aperture` depends on it), clear
+    /// aperture `aperture` (see [`ClearAperture`]), and optical axis at
+    /// `center` (m, m) in field coordinates.
     ///
     /// The closure is evaluated per band at `apply` time; results must be
     /// non-zero and finite (else [`OpticsError::InvalidFocal`]).
     ///
     /// # Errors
+    /// [`OpticsError::InvalidOrientation`] for a non-finite `Some` angle;
     /// [`OpticsError::InvalidAperture`] for a stopped lens with a
     /// non-positive/non-finite half-extent; [`OpticsError::InvalidAxis`]
     /// for `Field` with a non-finite center.
     pub fn new(
         f: impl Fn(f64) -> f64 + 'static,
+        orientation: Option<Angle>,
         aperture: ClearAperture,
         center: (f64, f64),
     ) -> Result<Self, OpticsError> {
+        let orientation = resolve_orientation(orientation)?;
         aperture.validate(center)?;
         let shape = aperture.shape();
         Ok(Self {
             f: Box::new(f),
+            orientation,
             aperture,
             center,
             shape,
@@ -740,21 +880,27 @@ impl ThinLens {
 
     /// Non-dispersing thin lens of focal length `f0` (m): the constant
     /// closure $f(\lambda) \equiv f_0$. See [`ThinLens::new`] for the
-    /// `aperture` semantics.
+    /// `orientation`/`aperture` semantics.
     ///
     /// # Errors
     /// As [`ThinLens::new`].
     pub fn fixed(
         f0: f64,
+        orientation: Option<Angle>,
         aperture: ClearAperture,
         center: (f64, f64),
     ) -> Result<Self, OpticsError> {
-        Self::new(move |_lambda| f0, aperture, center)
+        Self::new(move |_lambda| f0, orientation, aperture, center)
     }
 
     /// Focal length (m) at wavelength `lambda` (m) from the closure.
     pub fn focal_at(&self, lambda: f64) -> f64 {
         (self.f)(lambda)
+    }
+
+    /// Effective orientation (rad, CCW about $z$); affects only the stop.
+    pub fn orientation(&self) -> Angle {
+        self.orientation
     }
 
     /// The lens's clear aperture.
@@ -796,7 +942,7 @@ impl ThinLens {
         let (cx, cy) = self.center;
         let half_x = (nx as f64 - 1.0) / 2.0 * dx;
         let half_y = (ny as f64 - 1.0) / 2.0 * dy;
-        let (ax, ay) = self.aperture.axis_halves();
+        let (ax, ay) = self.aperture.axis_halves_at(*self.orientation);
         let rx = ax.min(half_x + cx.abs());
         let ry = ay.min(half_y + cy.abs());
         let k = 2.0 * PI / lambda;
@@ -845,7 +991,8 @@ impl Element for ThinLens {
             return Err(OpticsError::InvalidFocal { lambda, f });
         }
         let (cx, cy) = self.center;
-        if let Some((fx, fy)) = self.aperture.footprint() {
+        let psi = *self.orientation;
+        if let Some((fx, fy)) = self.aperture.footprint_at(psi) {
             let (grid_half_x, grid_half_y) = grid_half_extents(band);
             if cx.abs() + fx > grid_half_x || cy.abs() + fy > grid_half_y {
                 return Err(OpticsError::OutsideField {
@@ -867,7 +1014,7 @@ impl Element for ThinLens {
                 let (x, y) = field.coord(ix, iy);
                 let (xr, yr) = (x - cx, y - cy);
                 let s = field.sample_mut(ix, iy);
-                if !self.aperture.contains(xr, yr) {
+                if !self.aperture.contains_at(xr, yr, psi) {
                     *s = Complex64::ZERO;
                     continue;
                 }
@@ -885,12 +1032,13 @@ impl Element for ThinLens {
 /// closure now; the sampled-profile variant arrives with Phase 5, since PSF
 /// export needs grids anyway).
 ///
-/// $$t(x, y) = \begin{cases} e^{i\varphi(x - x_c,\; y - y_c)} &
-///   (x - x_c,\, y - y_c) \in A \\
-///   0 & \text{otherwise (when stopped)} \end{cases}$$
+/// $$t(x, y) = \begin{cases} e^{i\varphi(x',\; y')} & (x',\, y') \in A \\
+///   0 & \text{otherwise (when stopped)} \end{cases}
+///   \qquad (x', y') = R(-\psi)\big((x, y) - (x_c, y_c)\big)$$
 ///
-/// The closure receives **center-relative coordinates** in meters and
-/// returns phase in radians, so DOE designs are translation-invariant; the
+/// The closure receives **element-frame coordinates** in meters (center-
+/// relative, rotated by $-\psi$) and returns phase in radians, so DOE
+/// designs are translation- and rotation-invariant; the
 /// mask itself imposes no wavelength dependence beyond $e^{i\varphi}$ —
 /// dispersive profiles (blazed at a design wavelength, DOE lenses) encode
 /// $\lambda$ by composing per-band masks or by closures curried with the
@@ -901,7 +1049,11 @@ impl Element for ThinLens {
 /// Clear aperture follows [`ThinLens`] via [`ClearAperture`]: a stopped
 /// mask (circle, ellipse, or rectangle — rectangular DOE windows included)
 /// is the primary form (hard edge, boundary inclusive, `extent` describes
-/// the mask); [`ClearAperture::Field`] acts field-wide.
+/// the mask); [`ClearAperture::Field`] acts field-wide. The `orientation`
+/// (`None` = typical, normal to $z$) rotates the **whole element frame**:
+/// the closure receives element-frame coordinates
+/// $(x', y') = R(-\psi)((x, y) - (x_c, y_c))$ and the stop rotates with
+/// the pattern — DOE designs are stated once in their own frame.
 ///
 /// **Sampling duty is caller-side:** no closed-form step bound exists for
 /// an arbitrary profile, and an $O(N^2)$ sweep to emit warnings is against
@@ -912,7 +1064,8 @@ impl Element for ThinLens {
 // No `Clone`/`Debug`/`PartialEq` derives: the phase closure and `Material`
 // hold boxed functions; element identity is by value of its accessors.
 pub struct PhaseMask {
-    phase: Box<dyn Fn(f64, f64) -> f64>, // center-relative (x, y) m -> phase rad
+    phase: Box<dyn Fn(f64, f64) -> f64>, // element-frame (x', y') m -> phase rad
+    orientation: Angle,                  // rad, CCW about z (module docs)
     aperture: ClearAperture,             // stop geometry, meters from center
     center: (f64, f64),                  // mask origin, meters, field coordinates
     shape: ElementShape,
@@ -920,24 +1073,29 @@ pub struct PhaseMask {
 }
 
 impl PhaseMask {
-    /// Phase mask with analytic closure `phase` of center-relative
-    /// coordinates (m, m) returning radians, clear aperture `aperture`
-    /// (see [`ClearAperture`]), and origin at `center` (m, m) in field
+    /// Phase mask with analytic closure `phase` of element-frame
+    /// coordinates (m, m) returning radians, `orientation` (`None` =
+    /// typical, normal to $z$), clear aperture `aperture` (see
+    /// [`ClearAperture`]), and origin at `center` (m, m) in field
     /// coordinates.
     ///
     /// # Errors
+    /// [`OpticsError::InvalidOrientation`] for a non-finite `Some` angle;
     /// [`OpticsError::InvalidAperture`] for a stopped mask with a
     /// non-positive/non-finite half-extent; [`OpticsError::InvalidAxis`]
     /// for `Field` with a non-finite center.
     pub fn new(
         phase: impl Fn(f64, f64) -> f64 + 'static,
+        orientation: Option<Angle>,
         aperture: ClearAperture,
         center: (f64, f64),
     ) -> Result<Self, OpticsError> {
+        let orientation = resolve_orientation(orientation)?;
         aperture.validate(center)?;
         let shape = aperture.shape();
         Ok(Self {
             phase: Box::new(phase),
+            orientation,
             aperture,
             center,
             shape,
@@ -946,11 +1104,16 @@ impl PhaseMask {
         })
     }
 
-    /// Closure probe: phase (rad) at center-relative coordinates `(x, y)`
-    /// (m). Not validated — use [`PhaseMask::new`] + `apply` for checked
-    /// evaluation on the grid.
+    /// Closure probe: phase (rad) at element-frame coordinates `(x, y)`
+    /// (m) — center-relative and rotated by $-\psi$. Not validated — use
+    /// [`PhaseMask::new`] + `apply` for checked evaluation on the grid.
     pub fn phase_at(&self, x: f64, y: f64) -> f64 {
         (self.phase)(x, y)
+    }
+
+    /// Effective orientation (rad, CCW about $z$).
+    pub fn orientation(&self) -> Angle {
+        self.orientation
     }
 
     /// The mask's clear aperture.
@@ -997,7 +1160,8 @@ impl Element for PhaseMask {
     /// the grid.
     fn apply(&self, band: &BandField) -> Result<BandField, OpticsError> {
         let (cx, cy) = self.center;
-        if let Some((fx, fy)) = self.aperture.footprint() {
+        let psi = *self.orientation;
+        if let Some((fx, fy)) = self.aperture.footprint_at(psi) {
             let (grid_half_x, grid_half_y) = grid_half_extents(band);
             if cx.abs() + fx > grid_half_x || cy.abs() + fy > grid_half_y {
                 return Err(OpticsError::OutsideField {
@@ -1017,16 +1181,17 @@ impl Element for PhaseMask {
             for ix in 0..nx {
                 let (x, y) = field.coord(ix, iy);
                 let (xr, yr) = (x - cx, y - cy);
+                let (fx, fy) = to_element_frame(xr, yr, psi);
                 let s = field.sample_mut(ix, iy);
-                if !self.aperture.contains(xr, yr) {
+                if !self.aperture.contains(fx, fy) {
                     *s = Complex64::ZERO;
                     continue;
                 }
-                let phi = (self.phase)(xr, yr);
+                let phi = (self.phase)(fx, fy);
                 if !phi.is_finite() {
                     return Err(OpticsError::InvalidPhase {
-                        x: xr,
-                        y: yr,
+                        x: fx,
+                        y: fy,
                         phase: phi,
                     });
                 }
@@ -1070,9 +1235,9 @@ impl Element for PhaseMask {
 // No `Clone`/`Debug`/`PartialEq` derives: the `Material` field holds boxed
 // closures; element identity is by value of its accessors.
 pub struct BlazedGrating {
-    period: f64,      // Lambda, meters
-    phase_depth: f64, // Phi, radians per period
-    orientation: f64, // psi, radians from +x axis (grating vector direction)
+    period: f64,        // Lambda, meters
+    phase_depth: f64,   // Phi, radians per period
+    orientation: Angle, // psi, rad CCW about z — the grating vector (mandatory)
     aperture: ClearAperture,
     center: (f64, f64), // grating origin, meters, field coordinates
     shape: ElementShape,
@@ -1082,8 +1247,11 @@ pub struct BlazedGrating {
 impl BlazedGrating {
     /// Blazed grating with period `period` (m, positive finite), blaze
     /// depth `phase_depth` (rad per period, finite), grating-vector
-    /// orientation `orientation` (rad from $+x$), clear aperture
-    /// `aperture`, and origin `center` (m, m).
+    /// orientation `orientation` — mandatory `Angle`, since the vector
+    /// direction is intrinsic design data, not a mounting choice (module
+    /// docs: CCW about $z$ viewed from downstream) — clear aperture
+    /// `aperture` (rotating with the element frame), and origin `center`
+    /// (m, m).
     ///
     /// # Errors
     /// [`OpticsError::InvalidGrating`] for a non-positive/non-finite period
@@ -1092,7 +1260,7 @@ impl BlazedGrating {
     pub fn new(
         period: f64,
         phase_depth: f64,
-        orientation: f64,
+        orientation: Angle,
         aperture: ClearAperture,
         center: (f64, f64),
     ) -> Result<Self, OpticsError> {
@@ -1104,7 +1272,7 @@ impl BlazedGrating {
             return Err(OpticsError::InvalidGrating {
                 period,
                 depth: phase_depth,
-                orientation,
+                orientation: *orientation,
             });
         }
         aperture.validate(center)?;
@@ -1128,7 +1296,7 @@ impl BlazedGrating {
     /// As [`BlazedGrating::new`].
     pub fn kinoform(
         period: f64,
-        orientation: f64,
+        orientation: Angle,
         aperture: ClearAperture,
         center: (f64, f64),
     ) -> Result<Self, OpticsError> {
@@ -1145,8 +1313,8 @@ impl BlazedGrating {
         self.phase_depth
     }
 
-    /// Grating-vector orientation $\psi$ in radians from the $+x$ axis.
-    pub fn orientation(&self) -> f64 {
+    /// Grating-vector orientation (rad, CCW about $z$; `Angle` wrapped).
+    pub fn orientation(&self) -> Angle {
         self.orientation
     }
 
@@ -1160,11 +1328,12 @@ impl BlazedGrating {
         self.center
     }
 
-    /// Sawtooth probe: blaze phase (rad) at center-relative coordinates
-    /// `(x, y)` (m), i.e. $\Phi \cdot ((\mathbf{r}\cdot\hat g/\Lambda)
-    /// \bmod 1)$.
+    /// Sawtooth probe: blaze phase (rad) at element-frame coordinates
+    /// `(x, y)` (m) — the ramp runs along the element-frame $x'$ (the
+    /// grating vector), so $\varphi = \Phi\,(x/\Lambda \bmod 1)$.
     pub fn phase_at(&self, x: f64, y: f64) -> f64 {
-        let u = (x * self.orientation.cos() + y * self.orientation.sin()) / self.period;
+        let _ = y; // the stripes are invariant along the element-frame y
+        let u = x / self.period;
         self.phase_depth * (u - u.floor())
     }
 
@@ -1216,7 +1385,8 @@ impl Element for BlazedGrating {
     /// exceeds the grid.
     fn apply(&self, band: &BandField) -> Result<BandField, OpticsError> {
         let (cx, cy) = self.center;
-        if let Some((fx, fy)) = self.aperture.footprint() {
+        let psi = *self.orientation;
+        if let Some((fx, fy)) = self.aperture.footprint_at(psi) {
             let (grid_half_x, grid_half_y) = grid_half_extents(band);
             if cx.abs() + fx > grid_half_x || cy.abs() + fy > grid_half_y {
                 return Err(OpticsError::OutsideField {
@@ -1229,8 +1399,6 @@ impl Element for BlazedGrating {
                 });
             }
         }
-        let gx = self.orientation.cos();
-        let gy = self.orientation.sin();
         let inv_period = 1.0 / self.period;
         let mut out = band.clone();
         let field = out.field_mut();
@@ -1238,13 +1406,13 @@ impl Element for BlazedGrating {
         for iy in 0..ny {
             for ix in 0..nx {
                 let (x, y) = field.coord(ix, iy);
-                let (xr, yr) = (x - cx, y - cy);
+                let (fx, fy) = to_element_frame(x - cx, y - cy, psi);
                 let s = field.sample_mut(ix, iy);
-                if !self.aperture.contains(xr, yr) {
+                if !self.aperture.contains(fx, fy) {
                     *s = Complex64::ZERO;
                     continue;
                 }
-                let u = (xr * gx + yr * gy) * inv_period;
+                let u = fx * inv_period;
                 let phi = self.phase_depth * (u - u.floor());
                 *s *= (phi * Complex64::I).exp();
             }
@@ -1278,19 +1446,19 @@ mod tests {
     #[test]
     fn elliptical_constructor_validates_geometry() {
         assert!(matches!(
-            EllipticalAperture::new((0.0, 1e-3), (0.0, 0.0)),
+            EllipticalAperture::new((0.0, 1e-3), None, (0.0, 0.0)),
             Err(OpticsError::InvalidAperture { half_x: 0.0, .. })
         ));
         assert!(matches!(
-            EllipticalAperture::new((2e-3, -1e-3), (0.0, 0.0)),
+            EllipticalAperture::new((2e-3, -1e-3), None, (0.0, 0.0)),
             Err(OpticsError::InvalidAperture { half_y, .. }) if half_y == -1e-3
         ));
         assert!(matches!(
-            EllipticalAperture::new((f64::NAN, 1e-3), (0.0, 0.0)),
+            EllipticalAperture::new((f64::NAN, 1e-3), None, (0.0, 0.0)),
             Err(OpticsError::InvalidAperture { .. })
         ));
         assert!(matches!(
-            EllipticalAperture::new((1e-3, 1e-3), (f64::INFINITY, 0.0)),
+            EllipticalAperture::new((1e-3, 1e-3), None, (f64::INFINITY, 0.0)),
             Err(OpticsError::InvalidAperture { .. })
         ));
         assert!(matches!(
@@ -1301,7 +1469,7 @@ mod tests {
                 ..
             })
         ));
-        let ap = EllipticalAperture::new((2.5e-3, 1.5e-3), (1e-3, -1e-3)).unwrap();
+        let ap = EllipticalAperture::new((2.5e-3, 1.5e-3), None, (1e-3, -1e-3)).unwrap();
         assert_eq!(ap.semi_axes(), (2.5e-3, 1.5e-3));
         assert_eq!(ap.center(), (1e-3, -1e-3));
         assert!(ap.radius().is_none());
@@ -1314,7 +1482,7 @@ mod tests {
         assert_eq!(ap.radius(), Some(2.5e-3));
         assert!(matches!(ap.shape(), ElementShape::Circle));
         // Equal semi-axes through `new` are the same circle.
-        let same = EllipticalAperture::new((2.5e-3, 2.5e-3), (1e-3, -1e-3)).unwrap();
+        let same = EllipticalAperture::new((2.5e-3, 2.5e-3), None, (1e-3, -1e-3)).unwrap();
         assert!(matches!(same.shape(), ElementShape::Circle));
         assert_eq!(same.radius(), ap.radius());
     }
@@ -1322,18 +1490,18 @@ mod tests {
     #[test]
     fn rectangular_constructor_validates_geometry() {
         assert!(matches!(
-            RectangularAperture::new((0.0, 1e-3), (0.0, 0.0)),
+            RectangularAperture::new((0.0, 1e-3), None, (0.0, 0.0)),
             Err(OpticsError::InvalidAperture { half_x: 0.0, .. })
         ));
         assert!(matches!(
-            RectangularAperture::new((1e-3, f64::NAN), (0.0, 0.0)),
+            RectangularAperture::new((1e-3, f64::NAN), None, (0.0, 0.0)),
             Err(OpticsError::InvalidAperture { .. })
         ));
         assert!(matches!(
-            RectangularAperture::new((1e-3, 1e-3), (0.0, f64::NAN)),
+            RectangularAperture::new((1e-3, 1e-3), None, (0.0, f64::NAN)),
             Err(OpticsError::InvalidAperture { .. })
         ));
-        let ap = RectangularAperture::new((2.5e-3, 1.5e-3), (1e-3, -1e-3)).unwrap();
+        let ap = RectangularAperture::new((2.5e-3, 1.5e-3), None, (1e-3, -1e-3)).unwrap();
         assert_eq!(ap.half_width(), (2.5e-3, 1.5e-3));
         assert_eq!(ap.center(), (1e-3, -1e-3));
     }
@@ -1341,7 +1509,7 @@ mod tests {
     #[test]
     fn aperture_exceeding_grid_extent_is_rejected() {
         let band = band_101();
-        let big = EllipticalAperture::new((55e-3, 10e-3), (0.0, 0.0)).unwrap();
+        let big = EllipticalAperture::new((55e-3, 10e-3), None, (0.0, 0.0)).unwrap();
         match big.apply(&band) {
             Err(OpticsError::OutsideField {
                 half_x,
@@ -1365,19 +1533,19 @@ mod tests {
         ));
         // Exactly filling the grid fits (boundary inclusive).
         assert!(
-            EllipticalAperture::new((r50(), r50()), (0.0, 0.0))
+            EllipticalAperture::new((r50(), r50()), None, (0.0, 0.0))
                 .unwrap()
                 .apply(&band)
                 .is_ok()
         );
         // Rectangle: same bounding-box rule.
-        let rect_big = RectangularAperture::new((10e-3, 55e-3), (0.0, 0.0)).unwrap();
+        let rect_big = RectangularAperture::new((10e-3, 55e-3), None, (0.0, 0.0)).unwrap();
         assert!(matches!(
             rect_big.apply(&band),
             Err(OpticsError::OutsideField { half_y: 55e-3, .. })
         ));
         assert!(
-            RectangularAperture::new((r50(), r50()), (0.0, 0.0))
+            RectangularAperture::new((r50(), r50()), None, (0.0, 0.0))
                 .unwrap()
                 .apply(&band)
                 .is_ok()
@@ -1388,7 +1556,7 @@ mod tests {
     fn elliptical_mask_geometry_includes_boundary() {
         let band = band_101();
         // Ellipse a = 50 mm (fills x), b = 30 mm.
-        let ap = EllipticalAperture::new((r50(), 30e-3), (0.0, 0.0)).unwrap();
+        let ap = EllipticalAperture::new((r50(), 30e-3), None, (0.0, 0.0)).unwrap();
         let out = ap.apply(&band).unwrap();
         let f = out.field();
         let pass = band.field().sample(50, 50);
@@ -1409,7 +1577,7 @@ mod tests {
     #[test]
     fn rectangular_mask_geometry_includes_boundary() {
         let band = band_101();
-        let ap = RectangularAperture::new((r50(), 30e-3), (0.0, 0.0)).unwrap();
+        let ap = RectangularAperture::new((r50(), 30e-3), None, (0.0, 0.0)).unwrap();
         let out = ap.apply(&band).unwrap();
         let f = out.field();
         let pass = band.field().sample(50, 50);
@@ -1437,14 +1605,14 @@ mod tests {
         let (a, b) = (100e-6, 60e-6);
         let window = (n as f64 * d) * (n as f64 * d);
 
-        let ellipse = EllipticalAperture::new((a, b), (0.0, 0.0)).unwrap();
+        let ellipse = EllipticalAperture::new((a, b), None, (0.0, 0.0)).unwrap();
         let ratio = ellipse.apply(&band).unwrap().field().power() / band.field().power();
         let expected = PI * a * b / window;
         // Pixel-count discretization error is O(perimeter * d^2 / area) ~ d/a.
         let rel = ((ratio - expected) / expected).abs();
         assert!(rel < 0.03, "ellipse area error {rel} too large");
 
-        let rect = RectangularAperture::new((a, b), (0.0, 0.0)).unwrap();
+        let rect = RectangularAperture::new((a, b), None, (0.0, 0.0)).unwrap();
         let ratio = rect.apply(&band).unwrap().field().power() / band.field().power();
         let expected = 4.0 * a * b / window;
         let rel = ((ratio - expected) / expected).abs();
@@ -1461,7 +1629,7 @@ mod tests {
     fn applies_to_nonuniform_fields_by_masking() {
         // A tilted plane wave keeps its phase ramp inside the rectangle.
         let band = BandField::plane_wave(0.02, 0.0, 1.0, 101, 101, 1e-3, 1e-3, lambda()).unwrap();
-        let ap = RectangularAperture::new((20e-3, 10e-3), (0.0, 0.0)).unwrap();
+        let ap = RectangularAperture::new((20e-3, 10e-3), None, (0.0, 0.0)).unwrap();
         let out = ap.apply(&band).unwrap();
         for iy in 0..101 {
             for ix in 0..101 {
@@ -1479,7 +1647,7 @@ mod tests {
 
     #[test]
     fn trait_object_dispatch() {
-        let ell: &dyn Element = &EllipticalAperture::new((3e-3, 20e-3), (0.0, 0.0)).unwrap(); // a < b
+        let ell: &dyn Element = &EllipticalAperture::new((3e-3, 20e-3), None, (0.0, 0.0)).unwrap(); // a < b
         assert!(matches!(ell.shape(), ElementShape::Ellipse));
         assert!(matches!(ell.kind(), ElementKind::Aperture));
         // Conservative extent: the larger semi-axis.
@@ -1487,7 +1655,8 @@ mod tests {
             ell.extent(),
             Extent::Aperture(r) if (r - 20e-3).abs() < 1e-18
         ));
-        let rect: &dyn Element = &RectangularAperture::new((20e-3, 3e-3), (0.0, 0.0)).unwrap();
+        let rect: &dyn Element =
+            &RectangularAperture::new((20e-3, 3e-3), None, (0.0, 0.0)).unwrap();
         assert!(matches!(rect.shape(), ElementShape::Rectangle));
         assert!(matches!(
             rect.extent(),
@@ -1534,7 +1703,7 @@ mod tests {
             d,
         )
         .unwrap();
-        let focused = ThinLens::fixed(f, ClearAperture::Field, (0.0, 0.0))
+        let focused = ThinLens::fixed(f, None, ClearAperture::Field, (0.0, 0.0))
             .unwrap()
             .apply(&band)
             .unwrap();
@@ -1571,7 +1740,7 @@ mod tests {
         let n = 128usize;
         let d = 1e-5;
         let band = BandField::uniform(2.0, 0.0, n, n, d, d, lambda()).unwrap();
-        let out = ThinLens::fixed(f, ClearAperture::Field, (0.0, 0.0))
+        let out = ThinLens::fixed(f, None, ClearAperture::Field, (0.0, 0.0))
             .unwrap()
             .apply(&band)
             .unwrap();
@@ -1593,6 +1762,7 @@ mod tests {
         let f0 = 0.1;
         let lens = ThinLens::new(
             move |l| f0 * (1.0 + 0.5 * (l - l0) / l0),
+            None,
             ClearAperture::Field,
             (0.0, 0.0),
         )
@@ -1615,11 +1785,11 @@ mod tests {
     #[test]
     fn diverging_lens_conjugates_the_converging_phase() {
         let band = BandField::uniform(1.0, 0.0, 64, 64, 1e-5, 1e-5, lambda()).unwrap();
-        let conv = ThinLens::fixed(0.1, ClearAperture::Field, (0.0, 0.0))
+        let conv = ThinLens::fixed(0.1, None, ClearAperture::Field, (0.0, 0.0))
             .unwrap()
             .apply(&band)
             .unwrap();
-        let div = ThinLens::fixed(-0.1, ClearAperture::Field, (0.0, 0.0))
+        let div = ThinLens::fixed(-0.1, None, ClearAperture::Field, (0.0, 0.0))
             .unwrap()
             .apply(&band)
             .unwrap();
@@ -1632,7 +1802,7 @@ mod tests {
     fn lens_validation_and_taxonomy() {
         let band = BandField::uniform(1.0, 0.0, 8, 8, 1e-5, 1e-5, lambda()).unwrap();
         for bad in [0.0, f64::NAN, f64::INFINITY] {
-            let lens = ThinLens::fixed(bad, ClearAperture::Field, (0.0, 0.0)).unwrap();
+            let lens = ThinLens::fixed(bad, None, ClearAperture::Field, (0.0, 0.0)).unwrap();
             assert!(matches!(
                 lens.apply(&band),
                 Err(OpticsError::InvalidFocal { .. })
@@ -1640,22 +1810,24 @@ mod tests {
             assert_eq!(lens.worst_phase_step(&band), f64::INFINITY);
         }
         assert!(matches!(
-            ThinLens::new(|_| 0.1, ClearAperture::Field, (f64::NAN, 0.0)),
+            ThinLens::new(|_| 0.1, None, ClearAperture::Field, (f64::NAN, 0.0)),
             Err(OpticsError::InvalidAxis { .. })
         ));
         for bad_r in [0.0, -1e-3, f64::NAN] {
             assert!(matches!(
-                ThinLens::new(|_| 0.1, ClearAperture::Circle(bad_r), (0.0, 0.0)),
+                ThinLens::new(|_| 0.1, None, ClearAperture::Circle(bad_r), (0.0, 0.0)),
                 Err(OpticsError::InvalidAperture { .. })
             ));
         }
         // Field-wide special case.
-        let wide: &dyn Element = &ThinLens::fixed(0.1, ClearAperture::Field, (0.0, 0.0)).unwrap();
+        let wide: &dyn Element =
+            &ThinLens::fixed(0.1, None, ClearAperture::Field, (0.0, 0.0)).unwrap();
         assert!(matches!(wide.shape(), ElementShape::Unbounded));
         assert!(matches!(wide.kind(), ElementKind::Lens));
         assert!(matches!(wide.extent(), Extent::Unbounded));
         // Stopped lens: extent describes the lens, not the field.
-        let stopped = ThinLens::fixed(0.1, ClearAperture::Circle(20e-3), (1e-3, -1e-3)).unwrap();
+        let stopped =
+            ThinLens::fixed(0.1, None, ClearAperture::Circle(20e-3), (1e-3, -1e-3)).unwrap();
         assert_eq!(stopped.aperture(), ClearAperture::Circle(20e-3));
         assert_eq!(stopped.center(), (1e-3, -1e-3));
         let el: &dyn Element = &stopped;
@@ -1670,7 +1842,7 @@ mod tests {
     fn stopped_lens_masks_outside_the_clear_aperture() {
         let band = band_101();
         let a = 30e-3;
-        let lens = ThinLens::fixed(0.1, ClearAperture::Circle(a), (0.0, 0.0)).unwrap();
+        let lens = ThinLens::fixed(0.1, None, ClearAperture::Circle(a), (0.0, 0.0)).unwrap();
         let out = lens.apply(&band).unwrap();
         let f = out.field();
         let k = 2.0 * PI / lambda();
@@ -1690,7 +1862,7 @@ mod tests {
         let rel = ((ratio - expected) / expected).abs();
         assert!(rel < 0.03, "lens stop area error {rel}");
         // Footprint larger than the grid is rejected, not truncated.
-        let big = ThinLens::fixed(0.1, ClearAperture::Circle(55e-3), (0.0, 0.0)).unwrap();
+        let big = ThinLens::fixed(0.1, None, ClearAperture::Circle(55e-3), (0.0, 0.0)).unwrap();
         assert!(matches!(
             big.apply(&band),
             Err(OpticsError::OutsideField { half_x: 55e-3, .. })
@@ -1706,7 +1878,7 @@ mod tests {
         let d = 1e-4;
         let center = (3e-4, -2e-4);
         let band = BandField::uniform(1.0, 0.0, n, n, d, d, lambda()).unwrap();
-        let lens = ThinLens::fixed(2.0, ClearAperture::Field, center).unwrap();
+        let lens = ThinLens::fixed(2.0, None, ClearAperture::Field, center).unwrap();
         let out = lens.apply(&band).unwrap();
         let field = out.field();
         let mut max_step = 0.0f64;
@@ -1737,7 +1909,7 @@ mod tests {
     #[test]
     fn identity_mask_is_the_exact_identity() {
         let band = band_101();
-        let mask = PhaseMask::new(|_x, _y| 0.0, ClearAperture::Field, (0.0, 0.0)).unwrap();
+        let mask = PhaseMask::new(|_x, _y| 0.0, None, ClearAperture::Field, (0.0, 0.0)).unwrap();
         let out = mask.apply(&band).unwrap();
         assert_eq!(out.field().samples(), band.field().samples());
     }
@@ -1750,8 +1922,13 @@ mod tests {
         let k = 2.0 * PI / lambda();
         let alpha = theta.sin();
         let band = BandField::uniform(1.0, 0.0, 101, 101, 1e-3, 1e-3, lambda()).unwrap();
-        let mask =
-            PhaseMask::new(move |x, _y| k * alpha * x, ClearAperture::Field, (0.0, 0.0)).unwrap();
+        let mask = PhaseMask::new(
+            move |x, _y| k * alpha * x,
+            None,
+            ClearAperture::Field,
+            (0.0, 0.0),
+        )
+        .unwrap();
         let out = mask.apply(&band).unwrap();
         let want = BandField::plane_wave(theta, 0.0, 1.0, 101, 101, 1e-3, 1e-3, lambda()).unwrap();
         for (a, b) in out.field().samples().iter().zip(want.field().samples()) {
@@ -1772,11 +1949,12 @@ mod tests {
         let band = band_101();
         let doe = PhaseMask::new(
             move |x, y| -k * (x * x + y * y) / (2.0 * f),
+            None,
             ClearAperture::Circle(a),
             (0.0, 0.0),
         )
         .unwrap();
-        let lens = ThinLens::fixed(f, ClearAperture::Circle(a), (0.0, 0.0)).unwrap();
+        let lens = ThinLens::fixed(f, None, ClearAperture::Circle(a), (0.0, 0.0)).unwrap();
         let out_doe = doe.apply(&band).unwrap();
         let out_lens = lens.apply(&band).unwrap();
         assert_eq!(out_doe.field().samples(), out_lens.field().samples());
@@ -1788,8 +1966,13 @@ mod tests {
         let l = 3.0;
         let band = band_101();
         let input_phase = PI / 3.0;
-        let mask =
-            PhaseMask::new(move |x, y| l * y.atan2(x), ClearAperture::Field, (0.0, 0.0)).unwrap();
+        let mask = PhaseMask::new(
+            move |x, y| l * y.atan2(x),
+            None,
+            ClearAperture::Field,
+            (0.0, 0.0),
+        )
+        .unwrap();
         let out = mask.apply(&band).unwrap();
         for iy in 0..101usize {
             for ix in 0..101 {
@@ -1808,7 +1991,8 @@ mod tests {
     fn non_finite_closure_is_rejected_with_position() {
         let band = BandField::uniform(1.0, 0.0, 16, 16, 1e-3, 1e-3, lambda()).unwrap();
         for bad in [f64::NAN, f64::INFINITY] {
-            let mask = PhaseMask::new(move |_x, _y| bad, ClearAperture::Field, (0.0, 0.0)).unwrap();
+            let mask =
+                PhaseMask::new(move |_x, _y| bad, None, ClearAperture::Field, (0.0, 0.0)).unwrap();
             match mask.apply(&band) {
                 Err(OpticsError::InvalidPhase { x, y, phase }) => {
                     assert!(!phase.is_finite());
@@ -1823,8 +2007,13 @@ mod tests {
     #[test]
     fn mask_taxonomy_and_aperture_rules() {
         // Stopped form: extent describes the mask (task-c precedent).
-        let stopped: &dyn Element =
-            &PhaseMask::new(|_x, _y| 0.0, ClearAperture::Circle(20e-3), (1e-3, -1e-3)).unwrap();
+        let stopped: &dyn Element = &PhaseMask::new(
+            |_x, _y| 0.0,
+            None,
+            ClearAperture::Circle(20e-3),
+            (1e-3, -1e-3),
+        )
+        .unwrap();
         assert!(matches!(stopped.kind(), ElementKind::Diffractive));
         assert!(matches!(stopped.shape(), ElementShape::Circle));
         assert!(matches!(
@@ -1833,27 +2022,28 @@ mod tests {
         ));
         // Field-wide special case.
         let wide: &dyn Element =
-            &PhaseMask::new(|_x, _y| 0.0, ClearAperture::Field, (0.0, 0.0)).unwrap();
+            &PhaseMask::new(|_x, _y| 0.0, None, ClearAperture::Field, (0.0, 0.0)).unwrap();
         assert!(matches!(wide.shape(), ElementShape::Unbounded));
         assert!(matches!(wide.extent(), Extent::Unbounded));
         // Constructor validation.
         assert!(matches!(
-            PhaseMask::new(|_x, _y| 0.0, ClearAperture::Circle(0.0), (0.0, 0.0)),
+            PhaseMask::new(|_x, _y| 0.0, None, ClearAperture::Circle(0.0), (0.0, 0.0)),
             Err(OpticsError::InvalidAperture { .. })
         ));
         assert!(matches!(
-            PhaseMask::new(|_x, _y| 0.0, ClearAperture::Field, (f64::NAN, 0.0)),
+            PhaseMask::new(|_x, _y| 0.0, None, ClearAperture::Field, (f64::NAN, 0.0)),
             Err(OpticsError::InvalidAxis { .. })
         ));
         // Oversized footprint rejected, not truncated.
         let band = band_101();
-        let big = PhaseMask::new(|_x, _y| 0.5, ClearAperture::Circle(55e-3), (0.0, 0.0)).unwrap();
+        let big =
+            PhaseMask::new(|_x, _y| 0.5, None, ClearAperture::Circle(55e-3), (0.0, 0.0)).unwrap();
         assert!(matches!(
             big.apply(&band),
             Err(OpticsError::OutsideField { half_x: 55e-3, .. })
         ));
         // phase_at probe.
-        let m = PhaseMask::new(|x, y| x - y, ClearAperture::Field, (0.0, 0.0)).unwrap();
+        let m = PhaseMask::new(|x, y| x - y, None, ClearAperture::Field, (0.0, 0.0)).unwrap();
         assert_eq!(m.phase_at(2.0, 0.5), 1.5);
     }
 
@@ -1942,7 +2132,7 @@ mod tests {
             half_x: 40e-3,
             half_y: 20e-3,
         };
-        let mask = PhaseMask::new(|_x, _y| 0.5, rect, (0.0, 0.0)).unwrap();
+        let mask = PhaseMask::new(|_x, _y| 0.5, None, rect, (0.0, 0.0)).unwrap();
         let out = mask.apply(&band).unwrap();
         let f = out.field();
         let pass = band.field().sample(50, 50);
@@ -1963,6 +2153,7 @@ mod tests {
         // Asymmetric oversize: half_x fits, half_y does not.
         let big = PhaseMask::new(
             |_x, _y| 0.0,
+            None,
             ClearAperture::Rectangle {
                 half_x: 40e-3,
                 half_y: 55e-3,
@@ -1992,7 +2183,8 @@ mod tests {
         // Kinoform (depth 2pi, psi=0): phi = 2pi*frac(x/Lambda). Check the
         // profile repeats with period Lambda and ramps 0 -> 2pi across it.
         let period = 100e-6;
-        let g = BlazedGrating::kinoform(period, 0.0, ClearAperture::Field, (0.0, 0.0)).unwrap();
+        let g = BlazedGrating::kinoform(period, Angle::zero(), ClearAperture::Field, (0.0, 0.0))
+            .unwrap();
         // Sample the ramp at x = 0, quarter, half, three-quarter period.
         let at = |x: f64| g.phase_at(x, 0.0);
         assert!(at(0.0).abs() < 1e-12);
@@ -2006,12 +2198,24 @@ mod tests {
 
     #[test]
     fn orientation_rotates_the_grating_vector() {
-        // psi = pi/2 steers along +y: phase depends on y, constant in x.
+        // psi = pi/2 (CCW about z): the element-frame x' axis is lab +y, so
+        // the phase depends on lab y and is constant along lab x.
         let period = 100e-6;
-        let g =
-            BlazedGrating::kinoform(period, PI / 2.0, ClearAperture::Field, (0.0, 0.0)).unwrap();
-        assert!(g.phase_at(period / 4.0, 0.0).abs() < 1e-12); // x-projection 0
-        assert!((g.phase_at(0.0, period / 4.0) - PI / 2.0).abs() < 1e-12);
+        let band = BandField::uniform(1.0, 0.0, 64, 64, 5e-6, 5e-6, lambda()).unwrap();
+        let g = BlazedGrating::kinoform(period, Angle::pi_half(), ClearAperture::Field, (0.0, 0.0))
+            .unwrap();
+        // phase_at is element-frame: the ramp runs along frame x'.
+        assert!((g.phase_at(period / 4.0, 0.0) - PI / 2.0).abs() < 1e-12);
+        assert!(g.phase_at(0.0, period / 4.0).abs() < 1e-12);
+        // apply works in lab coordinates: frame (x', y') = R(-pi/2)(x, y) = (y, -x).
+        let out = g.apply(&band).unwrap();
+        for (ix, iy) in [(0usize, 0usize), (63, 17), (40, 5), (12, 63)] {
+            let (_, y) = band.field().coord(ix, iy);
+            let u = y / period;
+            let want = 2.0 * PI * (u - u.floor());
+            let err = (out.field().sample(ix, iy).arg() - want + PI).rem_euclid(2.0 * PI) - PI;
+            assert!(err.abs() < 1e-9, "rotated blaze at ({ix},{iy}): {err}");
+        }
     }
 
     #[test]
@@ -2022,8 +2226,14 @@ mod tests {
         let period = 100e-6;
         let band = BandField::uniform(1.0, 0.0, 64, 64, 5e-6, 5e-6, lambda()).unwrap();
         for m in [1.0f64, 2.0] {
-            let g = BlazedGrating::new(period, 2.0 * PI * m, 0.0, ClearAperture::Field, (0.0, 0.0))
-                .unwrap();
+            let g = BlazedGrating::new(
+                period,
+                2.0 * PI * m,
+                Angle::zero(),
+                ClearAperture::Field,
+                (0.0, 0.0),
+            )
+            .unwrap();
             let out = g.apply(&band).unwrap();
             let k = 2.0 * PI * m / period;
             for iy in 0..64usize {
@@ -2042,16 +2252,26 @@ mod tests {
     fn grating_masks_and_validates() {
         let band = band_101();
         let period = 100e-3; // coarse so the stop dominates the check
-        let g =
-            BlazedGrating::kinoform(period, 0.0, ClearAperture::Circle(30e-3), (0.0, 0.0)).unwrap();
+        let g = BlazedGrating::kinoform(
+            period,
+            Angle::zero(),
+            ClearAperture::Circle(30e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
         let out = g.apply(&band).unwrap();
         // Hard-edge stop: (x = 30 mm, y = 0) inclusive; one past is zero.
         assert!((out.field().sample(80, 50).norm() - 1.0).abs() < 1e-12);
         assert_eq!(out.field().sample(81, 50), Complex64::ZERO);
         assert_eq!(out.field().sample(100, 100), Complex64::ZERO);
         // Oversized footprint rejected.
-        let big =
-            BlazedGrating::kinoform(period, 0.0, ClearAperture::Circle(55e-3), (0.0, 0.0)).unwrap();
+        let big = BlazedGrating::kinoform(
+            period,
+            Angle::zero(),
+            ClearAperture::Circle(55e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
         assert!(matches!(
             big.apply(&band),
             Err(OpticsError::OutsideField { half_x: 55e-3, .. })
@@ -2060,22 +2280,28 @@ mod tests {
         // geometry; the stop keeps the shared aperture errors.
         for bad_period in [0.0, -1e-3, f64::NAN, f64::INFINITY] {
             assert!(matches!(
-                BlazedGrating::new(bad_period, PI, 0.0, ClearAperture::Field, (0.0, 0.0)),
+                BlazedGrating::new(bad_period, PI, Angle::zero(), ClearAperture::Field, (0.0, 0.0)),
                 Err(OpticsError::InvalidGrating { period, .. })
                     if period == bad_period || bad_period.is_nan()
             ));
         }
         assert!(matches!(
-            BlazedGrating::new(period, f64::NAN, 0.0, ClearAperture::Field, (0.0, 0.0)),
+            BlazedGrating::new(period, f64::NAN, Angle::zero(), ClearAperture::Field, (0.0, 0.0)),
             Err(OpticsError::InvalidGrating { depth, .. }) if depth.is_nan()
         ));
         assert!(matches!(
-            BlazedGrating::new(period, PI, f64::INFINITY, ClearAperture::Field, (0.0, 0.0)),
+            BlazedGrating::new(period, PI, Angle::new(f64::INFINITY), ClearAperture::Field, (0.0, 0.0)),
             Err(OpticsError::InvalidGrating { orientation, .. })
-                if orientation == f64::INFINITY
+                if orientation.is_nan() // Angle wraps non-finite to NaN
         ));
         assert!(matches!(
-            BlazedGrating::new(period, PI, 0.0, ClearAperture::Circle(0.0), (0.0, 0.0)),
+            BlazedGrating::new(
+                period,
+                PI,
+                Angle::zero(),
+                ClearAperture::Circle(0.0),
+                (0.0, 0.0)
+            ),
             Err(OpticsError::InvalidAperture { .. })
         ));
         // Taxonomy.
@@ -2095,7 +2321,8 @@ mod tests {
         let period = 51.2e-6;
         let d = 20e-6; // 2pi * 20/51.2 = 2.45 rad < pi
         let band = BandField::uniform(1.0, 0.0, 64, 64, d, d, lambda()).unwrap();
-        let g = BlazedGrating::kinoform(period, 0.0, ClearAperture::Field, (0.0, 0.0)).unwrap();
+        let g = BlazedGrating::kinoform(period, Angle::zero(), ClearAperture::Field, (0.0, 0.0))
+            .unwrap();
         let out = g.apply(&band).unwrap();
         let field = out.field();
         let mut max_step = 0.0f64;
@@ -2113,5 +2340,150 @@ mod tests {
             (closed - max_step).abs() < 1e-9,
             "closed {closed} vs sweep {max_step}"
         );
+    }
+
+    #[test]
+    fn orientation_defaults_to_typical_and_validates() {
+        // None == Some(zero) == axis-aligned typical orientation.
+        let ell = EllipticalAperture::new((2e-3, 1e-3), None, (0.0, 0.0)).unwrap();
+        assert_eq!(*ell.orientation(), 0.0);
+        let same = EllipticalAperture::new((2e-3, 1e-3), Some(Angle::zero()), (0.0, 0.0)).unwrap();
+        assert_eq!(*same.orientation(), *ell.orientation());
+        // -pi/2 wraps to 3pi/2 (implicit normalization, equal-modulo).
+        let w = RectangularAperture::new((2e-3, 1e-3), Some(Angle::new(-PI / 2.0)), (0.0, 0.0))
+            .unwrap();
+        assert!((*w.orientation() - 3.0 * PI / 2.0).abs() < 1e-12);
+        // Non-finite orientation rejected by every oriented constructor
+        // (Angle wraps non-finite inputs to NaN).
+        let nan = Some(Angle::new(f64::NAN));
+        assert!(matches!(
+            EllipticalAperture::new((1e-3, 1e-3), nan, (0.0, 0.0)),
+            Err(OpticsError::InvalidOrientation { .. })
+        ));
+        assert!(matches!(
+            RectangularAperture::new((1e-3, 1e-3), nan, (0.0, 0.0)),
+            Err(OpticsError::InvalidOrientation { .. })
+        ));
+        assert!(matches!(
+            ThinLens::fixed(0.1, nan, ClearAperture::Field, (0.0, 0.0)),
+            Err(OpticsError::InvalidOrientation { .. })
+        ));
+        assert!(matches!(
+            PhaseMask::new(|_x, _y| 0.0, nan, ClearAperture::Field, (0.0, 0.0)),
+            Err(OpticsError::InvalidOrientation { .. })
+        ));
+    }
+
+    #[test]
+    fn rotated_ellipse_aperture() {
+        // Semi-axes (50, 20) mm at psi = pi/4: the major axis runs along
+        // lab (cos45, sin45); the axis-aligned tip (50 mm, 0) is OUTSIDE.
+        let band = band_101();
+        let psi = Some(Angle::from_degrees(45.0));
+        let ap = EllipticalAperture::new((r50(), 20e-3), psi, (0.0, 0.0)).unwrap();
+        let out = ap.apply(&band).unwrap();
+        let f = out.field();
+        let pass = band.field().sample(50, 50);
+        // Along the rotated major axis: (35 mm, 35 mm) projects to x' ~ 49.5,
+        // y' = 0 -> inside (boundary-inclusive ellipse).
+        assert_eq!(f.sample(85, 85), pass);
+        // Old axis tip (50 mm, 0): frame (35.4, -35.4) -> outside the ellipse.
+        assert_eq!(f.sample(100, 50), Complex64::ZERO);
+        // Rotated bounding box (49.5 mm per side) still fits the 50 mm grid.
+        assert!(matches!(ap.shape(), ElementShape::Ellipse));
+        // A circle ignores orientation: same mask as the unrotated circle.
+        // (Radius chosen with no exact grid-boundary samples, so f64 frame
+        // rotation cannot flip a pixel.)
+        let circ = EllipticalAperture::new((31.7e-3, 31.7e-3), Some(Angle::pi_half()), (0.0, 0.0))
+            .unwrap();
+        let plain = EllipticalAperture::circle(31.7e-3, (0.0, 0.0)).unwrap();
+        assert_eq!(
+            circ.apply(&band).unwrap().field().samples(),
+            plain.apply(&band).unwrap().field().samples()
+        );
+    }
+
+    #[test]
+    fn rotated_rectangle_aperture() {
+        // Half-widths (40, 20) mm at psi = pi/2: the box swaps axes in lab.
+        let band = band_101();
+        let ap =
+            RectangularAperture::new((40e-3, 20e-3), Some(Angle::pi_half()), (0.0, 0.0)).unwrap();
+        let out = ap.apply(&band).unwrap();
+        let f = out.field();
+        let pass = band.field().sample(50, 50);
+        assert_eq!(f.sample(69, 89), pass); // lab (19, 39) mm: frame (39, -19) strictly inside
+        assert_eq!(f.sample(91, 70), Complex64::ZERO); // lab (41, 20): frame y' = -41 > 20
+        assert_eq!(f.sample(70, 91), Complex64::ZERO); // lab (20, 41): frame x' = 41 > 40
+    }
+
+    #[test]
+    fn rotated_stop_outside_field_uses_bounding_box() {
+        let band = band_101();
+        // Rectangle (48, 30) mm fits axis-aligned ...
+        let fits = PhaseMask::new(
+            |_x, _y| 0.0,
+            Some(Angle::zero()),
+            ClearAperture::Rectangle {
+                half_x: 48e-3,
+                half_y: 30e-3,
+            },
+            (0.0, 0.0),
+        )
+        .unwrap();
+        assert!(fits.apply(&band).is_ok());
+        // ... but rotated 45 deg its bounding box reaches 55.2 mm > 50 mm.
+        let tilted = PhaseMask::new(
+            |_x, _y| 0.0,
+            Some(Angle::from_degrees(45.0)),
+            ClearAperture::Rectangle {
+                half_x: 48e-3,
+                half_y: 30e-3,
+            },
+            (0.0, 0.0),
+        )
+        .unwrap();
+        match tilted.apply(&band) {
+            Err(OpticsError::OutsideField { half_x, half_y, .. }) => {
+                let b = (48e-3 + 30e-3) * (PI / 4.0).cos(); // (hx + hy) * cos45
+                assert!((half_x - b).abs() < 1e-15 && (half_y - b).abs() < 1e-15);
+            }
+            other => panic!("expected OutsideField, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lens_and_grating_apertures_rotate_with_the_element() {
+        let band = band_101();
+        // Elliptical stop (40, 15) mm on a lens, psi = pi/2: major axis
+        // along lab +y. Point (0, 40 mm) passes, (40 mm, 0) is stopped.
+        let lens = ThinLens::fixed(
+            0.5,
+            Some(Angle::pi_half()),
+            ClearAperture::Ellipse { a: 40e-3, b: 15e-3 },
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let out = lens.apply(&band).unwrap();
+        assert!((out.field().sample(50, 90).norm() - 1.0).abs() < 1e-12); // (0, 40 mm)
+        assert_eq!(out.field().sample(90, 50), Complex64::ZERO); // (40 mm, 0)
+        // Grating rectangular stop aligned with the stripes (psi = pi/2):
+        // stripes run along lab y; a tall window follows the rotation.
+        let g = BlazedGrating::kinoform(
+            100e-3,
+            Angle::pi_half(),
+            ClearAperture::Rectangle {
+                half_x: 10e-3,
+                half_y: 40e-3,
+            },
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let gout = g.apply(&band).unwrap();
+        // Frame coords (x', y') = (y, -x): lab (0, 40 mm) -> (40, 0) mm is
+        // OUTSIDE the frame box (|x'| = 40 > 10); lab (10 mm, 0) -> (0, -10)
+        // is inside.
+        assert_eq!(gout.field().sample(50, 90), Complex64::ZERO);
+        assert!((gout.field().sample(60, 50).norm() - 1.0).abs() < 1e-12);
     }
 }

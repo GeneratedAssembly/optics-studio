@@ -66,6 +66,30 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   sampled plane) is kept as the `clear_radius = None` special case;
   taxonomy retains `ElementShape::Unbounded` / `Extent::Unbounded` for it.
 
+### Decisions (Phase-3 task 3.e.1 review, 2026-10-12, user)
+
+- **Uniform element orientation**: every element carries an orientation ψ
+  as `Angle` (not f64, for specificity). Elements with a typical
+  orientation (flat, normal to $z$, axes aligned) take `Option<Angle>` —
+  `None` *is* the typical orientation (ψ = 0); the `BlazedGrating` vector
+  direction is intrinsic design data, so it takes a mandatory `Angle`.
+  Convention pinned in the element module docs: **positive ψ rotates
+  counterclockwise about the optical axis $z$ viewed from downstream
+  (looking back along $-z$ against the beam); equivalently clockwise
+  viewed from upstream along $+z$** (right-hand rule). Pattern *and* stop
+  live in the element frame $\mathbf{r}' = R(-\psi)(\mathbf{r} - \mathbf{c})$;
+  mirrors and future elements adopt the same pattern. (Also audited:
+  explicit `ClearAperture::Field` everywhere — no `Option` aperture ever
+  implied field.)
+- **`Angle` wraps implicitly** into $[0, 2\pi)$ at every constructor and
+  arithmetic op (non-finite wraps to NaN for callers to reject);
+  degree/radian conversions stay explicit (`from_degrees`, `degrees()`);
+  `PartialEq` added — equal-modulo angles compare equal.
+- **Rotated non-circular stops**: `OutsideField` carries the axis-aligned
+  bounding-box half-extents $h_x|\cos\psi| + h_y|\sin\psi|$; circles are
+  rotation-invariant; `PhaseMask`/`BlazedGrating` `phase_at` inputs and
+  `InvalidPhase` positions are element-frame coordinates.
+
 ### Added
 
 - `sources` module (`src/sources.rs`, Phase 3 task a, decision D3): closed-form
@@ -198,9 +222,30 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   matching the sawtooth Fourier coefficients $|c_m|^2 = 4/(\pi^2(1-2m)^2)$
   (Eq. 5.1 positions). Shared-helper toolbox `tests/common/mod.rs`
   marked `allow(dead_code)` (targets use subsets).
+- Element **orientation** (task 3.e.1): `EllipticalAperture::new`,
+  `RectangularAperture::new`, `ThinLens::new`/`fixed`, `PhaseMask::new`
+  take `Option<Angle>` (`None` = typical, normal to $z$);
+  `BlazedGrating::new`/`kinoform` take a mandatory `Angle`; all expose
+  `orientation() -> Angle`. Rotation helpers `to_element_frame` /
+  `rotated_box` + `ClearAperture::{contains_at, footprint_at,
+  axis_halves_at}`; new `OpticsError::InvalidOrientation { radians }`.
+  `Angle` gained implicit $[0, 2\pi)$ wrapping, `PartialEq`, and unit
+  tests (2); element orientation tests (5): default/validation across
+  all constructors, rotated ellipse aperture (major axis follows ψ,
+  circle invariance), rotated rectangle (axis swap), rotated-stop
+  `OutsideField` bounding box, lens/grating stops rotating with the
+  element, rotated grating vector via `apply`.
 
 ### Changed
 
+- **Breaking (task 3.e.1)**: element constructor signatures gained the
+  orientation argument; `BlazedGrating::orientation()` returns `Angle`
+  (was `f64`); `PhaseMask`/`BlazedGrating` `phase_at` take element-frame
+  coordinates (mask closure and grating ramp now evaluated in the rotated
+  frame; `InvalidPhase` positions likewise); `Angle` constructors and
+  arithmetic now wrap (values normalized to $[0, 2\pi)$ — trig
+  unaffected, stored raw angles from `Angle::new`/`from_degrees`/`Add`/
+  `Sub` change representation).
 - `OpticsError` variants carry footprint half-extents (see Decisions);
   `CircularAperture` references in `lib.rs` quick-start, `regime`/
   `fraunhofer` docs, `docs/architecture.md`, `docs/physics.md`, and the

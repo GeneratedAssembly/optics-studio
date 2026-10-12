@@ -16,6 +16,7 @@
 mod common;
 
 use common::LAMBDA;
+use optics_rs::common::Angle;
 use optics_rs::element::{BlazedGrating, ClearAperture, Element};
 use optics_rs::field::BandField;
 use optics_rs::propagation::fraunhofer::{self, FraunhoferConfig};
@@ -39,8 +40,14 @@ fn order_bins(m: f64) -> f64 {
 
 fn propagate_blaze(depth: f64) -> BandField {
     let band = BandField::uniform(1.0, 0.0, N, N, PITCH, PITCH, LAMBDA).unwrap();
-    let grating =
-        BlazedGrating::new(PERIOD, depth, 0.0, ClearAperture::Circle(STOP), (0.0, 0.0)).unwrap();
+    let grating = BlazedGrating::new(
+        PERIOD,
+        depth,
+        Angle::zero(),
+        ClearAperture::Circle(STOP),
+        (0.0, 0.0),
+    )
+    .unwrap();
     let masked = grating.apply(&band).unwrap();
     let cfg = FraunhoferConfig {
         aperture_extent: Some(STOP),
