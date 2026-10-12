@@ -8,7 +8,9 @@
 //! far-field limit (`propagation::fraunhofer`) — with sampling guards,
 //! regime diagnostics (`propagation::regime`), and locally acting
 //! [`element::Element`]s (apertures, and in later phases lenses, phase
-//! masks, DOEs, gratings).
+//! masks, DOEs, gratings), with closed-form field initializers in
+//! [`sources`] (Gaussian beam) producing [`field::BandField`]s ready for
+//! propagation.
 //!
 //! Ray tracing / geometric optics is deliberately out of scope (see
 //! `agents.md`). The physics models, formulas, and validity regimes are
@@ -59,4 +61,5 @@ pub mod common;
 pub mod element;
 pub mod field;
 pub mod propagation;
+pub mod sources;
 pub mod wave;

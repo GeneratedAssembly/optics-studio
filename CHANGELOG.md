@@ -26,6 +26,35 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   serialization; `sources` is a new top-level module returning
   `BandField`s (multiband-ready by construction).
 
+### Added
+
+- `sources` module (`src/sources.rs`, Phase 3 task a, decision D3): closed-form
+  field initializers returning `BandField`s (multiband by construction).
+  First initializer: `GaussianBeam` parameter record (`w0`, `amplitude`,
+  `center`; SI meters) + `gaussian(&beam, z, lambda, nx, ny, dx, dy) ->
+  Result<BandField, SourcesError>` sampling the paraxial fundamental-mode
+  solution $u = A\frac{w_0}{w(z)} e^{-\rho^2/w(z)^2}
+  e^{\,i(k\rho^2/2R(z))} e^{\,i(kz-\zeta(z))}$ with
+  $z_R = \pi w_0^2/\lambda$, $w(z) = w_0\sqrt{1+(z/z_R)^2}$,
+  $1/R(z) = z/(z^2+z_R^2)$ (finite at $z=0$), $\zeta = \arctan(z/z_R)$ —
+  written in the crate's $e^{+ikz}$ convention ($q = z - i z_R$, conjugate of
+  the usual $e^{-ikz}$ textbook form); the project textbook does not restate
+  the $q(z)$ solution, so the convention is pinned by cross-checks against
+  the crate's own engines.
+- **Position is a system property, not a source property** (task-a review,
+  user 2026-10-12): the beam record holds no longitudinal position — the
+  signed waist-to-plane distance `z` is a sampling argument, as elements hold
+  no position either; `beam_radius(z, lambda)` and `gouy_phase(z, lambda)`
+  are explicit functions of the measurement plane. `SourcesError`
+  (thiserror): `InvalidBeam` diagnostics + `InvalidPlane { z }` +
+  transparent `FieldError` carry; convenience accessor `rayleigh_range`.
+  Unit tests (6): waist plane equals the real Gaussian with analytic power
+  $A^2\pi w_0^2/2$; on-axis amplitude/Gouy of the $q$-form; Fresnel-TF and
+  ASM propagation of a waist beam reproduce the analytic initializer at $z$
+  ($<10^{-3}$ Frobenius — sign-convention pin); $u(-z) = \overline{u(z)}$
+  mirror symmetry; off-center waist translates by integer samples;
+  beam/plane/wavelength/grid validation.
+
 ## [0.2.0] - 2026-10-12
 
 Phase 2: Fresnel (TF + convolution) and Fraunhofer propagation, regime
