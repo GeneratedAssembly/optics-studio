@@ -33,6 +33,60 @@ pub fn gaussian_band(nx: usize, ny: usize, d: f64, sigma: f64, c: (f64, f64)) ->
     BandField::new(LAMBDA, Field::new(samples, nx, ny, d, d).unwrap()).unwrap()
 }
 
+/// Direct Rayleigh–Sommerfeld first-kind quadrature (reference truth):
+/// the LINEAR convolution of the band with the RS-I impulse response
+///
+/// $$h(\Delta x, \Delta y; z) = \frac{|z|}{2\pi r^2}\Big(\frac{1}{r} - i\,\mathrm{sgn}(z)\,k\Big)e^{\,i\,\mathrm{sgn}(z)\,kr},
+///   \qquad r = \sqrt{\Delta x^2 + \Delta y^2 + z^2},$$
+///
+/// summed over the input window with the $\Delta x\,\Delta y$ weight and
+/// evaluated at the same output pixels as the input grid. The FFT engine's
+/// result differs from this only by circular wraparound (controlled by the
+/// padding + kernel-sampling guard), so the comparison isolates exactly that
+/// discretization choice. $O(n^4)$ with an $O(n^2)$ kernel table — keep
+/// grids small (test-only per the dependency policy, like the $J_1$ and
+/// Fresnel-integral quadrature).
+pub fn rs_direct(band: &BandField, z: f64) -> BandField {
+    let lambda = band.lambda();
+    let field = band.field();
+    let (nx, ny) = field.dims();
+    let (dx, dy) = field.pitch();
+    let k = 2.0 * PI / lambda;
+    let s = if z >= 0.0 { 1.0 } else { -1.0 };
+    let az = z.abs();
+    // Kernel table over all reachable index offsets (di in [-(nx-1), nx-1]).
+    let hx = 2 * nx - 1;
+    let hy = 2 * ny - 1;
+    let mut tab = vec![Complex64::ZERO; hx * hy];
+    for dj in 0..hy {
+        let yy = (dj as i64 - (ny as i64 - 1)) as f64 * dy;
+        for di in 0..hx {
+            let xx = (di as i64 - (nx as i64 - 1)) as f64 * dx;
+            let r = (xx * xx + yy * yy + az * az).sqrt();
+            let obliq = Complex64::new(
+                az / (2.0 * PI * r * r * r),
+                -s * k * az / (2.0 * PI * r * r),
+            );
+            tab[dj * hx + di] = obliq * ((s * k * r) * Complex64::I).exp() * (dx * dy);
+        }
+    }
+    let mut out = vec![Complex64::ZERO; nx * ny];
+    for jy in 0..ny {
+        for jx in 0..nx {
+            let mut acc = Complex64::ZERO;
+            for iy in 0..ny {
+                let row = (jy as i64 - iy as i64 + (ny as i64 - 1)) as usize * hx;
+                for ix in 0..nx {
+                    acc += field.sample(ix, iy)
+                        * tab[row + (jx as i64 - ix as i64 + (nx as i64 - 1)) as usize];
+                }
+            }
+            out[jy * nx + jx] = acc;
+        }
+    }
+    BandField::new(lambda, Field::new(out, nx, ny, dx, dy).unwrap()).unwrap()
+}
+
 /// Bessel $J_1$ via Simpson integration of
 /// $J_1(x) = \frac{1}{\pi} \int_0^\pi \cos(x \sin t - t)\, dt$.
 pub fn bessel_j1(x: f64) -> f64 {
