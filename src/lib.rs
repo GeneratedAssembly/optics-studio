@@ -42,14 +42,14 @@
 //! ## Quick start
 //!
 //! ```
-//! use optics_rs::element::{CircularAperture, Element};
+//! use optics_rs::element::{Element, EllipticalAperture};
 //! use optics_rs::field::BandField;
 //! use optics_rs::propagation::asm::{propagate, AsmConfig};
 //!
 //! // Uniform 500 nm band on a 64 x 64 grid, 20 um pitch (1.28 mm window).
 //! let band = BandField::uniform(1.0, 0.0, 64, 64, 20e-6, 20e-6, 500e-9).unwrap();
 //! // Hard-edge circular aperture, radius 0.3 mm, centered: a local mask.
-//! let aperture = CircularAperture::new(0.3e-3, (0.0, 0.0)).unwrap();
+//! let aperture = EllipticalAperture::circle(0.3e-3, (0.0, 0.0)).unwrap();
 //! let masked = aperture.apply(&band).unwrap();
 //! // Diffractive spreading appears only after propagation: the edge
 //! // structure advances 5 cm through the angular spectrum transfer function.

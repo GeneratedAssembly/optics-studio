@@ -10,7 +10,7 @@ mod common;
 
 use common::*;
 use num_complex::Complex64;
-use optics_rs::element::{CircularAperture, Element};
+use optics_rs::element::{Element, EllipticalAperture};
 use optics_rs::field::{BandField, Field};
 use optics_rs::propagation::{asm, fraunhofer, fresnel, regime};
 use std::f64::consts::PI;
@@ -256,7 +256,7 @@ fn airy_pattern_across_all_three_engines() {
     let a = 1e-3;
     let z = 40.0;
     let band = BandField::uniform(1.0, 0.0, n, n, d, d, LAMBDA).unwrap();
-    let ap = CircularAperture::new(a, (0.0, 0.0)).unwrap();
+    let ap = EllipticalAperture::circle(a, (0.0, 0.0)).unwrap();
     let masked = ap.apply(&band).unwrap();
     let k = 2.0 * PI / LAMBDA;
     let r_max = 12.6e-3; // v up to 3.96: core, first dark ring, first bright ring
@@ -347,7 +347,7 @@ fn regime_recommendations_execute_cleanly() {
 
     // D's aperture at z = 4 with declared extent: far field -> Fraunhofer.
     let band = BandField::uniform(1.0, 0.0, 256, 256, 2e-5, 2e-5, LAMBDA).unwrap();
-    let ap = CircularAperture::new(1e-3, (0.0, 0.0)).unwrap();
+    let ap = EllipticalAperture::circle(1e-3, (0.0, 0.0)).unwrap();
     let masked = ap.apply(&band).unwrap();
     let rep = regime::regime_report_with(&masked, 4.0, Some(1e-3));
     assert_eq!(rep.recommended, regime::Engine::Fraunhofer);

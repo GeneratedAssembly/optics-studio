@@ -5,7 +5,7 @@
 //!
 //! - [`fresnel_number`] implements the regime criterion itself,
 //!   $N_F = a^2/(\lambda |z|)$, for a *known* aperture half-width $a$
-//!   (e.g. `CircularAperture::radius()`): $N_F \ll 1$ far field
+//!   (e.g. `EllipticalAperture::radius()`): $N_F \ll 1$ far field
 //!   (Fraunhofer), $N_F \gtrsim 1$ near field (Fresnel/ASM).
 //! - [`regime_report`] assesses a whole grid conservatively (window extent
 //!   in place of an aperture radius, since the propagator cannot know the
@@ -69,7 +69,7 @@ impl fmt::Display for Engine {
 /// (distance $z$, m, sign ignored): $N_F \ll 1$ far field (Fraunhofer),
 /// $N_F \gtrsim 1$ near field (Fresnel zones across the aperture),
 /// $N_F \gg 1$ deep near field. Use the actual aperture radius
-/// (e.g. [`crate::element::CircularAperture::radius`]) for a tight
+/// (e.g. [`crate::element::EllipticalAperture::radius`]) for a tight
 /// estimate; [`regime_report`] falls back to the conservative window extent.
 ///
 /// Returns `f64::INFINITY` for $z = 0$ and `f64::NAN` for invalid inputs
@@ -153,7 +153,7 @@ impl fmt::Display for RegimeReport {
 /// Pure diagnostics: nothing here executes a propagation.
 ///
 /// The extent estimate is the conservative full window; when the physical
-/// aperture is known (e.g. after [`crate::element::CircularAperture`]),
+/// aperture is known (e.g. after [`crate::element::EllipticalAperture`]),
 /// use [`regime_report_with`] with the true half-extent — the far-field
 /// condition is a property of the source, not of the sampling window.
 pub fn regime_report(band: &BandField, z: f64) -> RegimeReport {
@@ -161,7 +161,7 @@ pub fn regime_report(band: &BandField, z: f64) -> RegimeReport {
 }
 
 /// As [`regime_report`], with an optional true source half-extent `a`
-/// (meters, from the axis; e.g. `CircularAperture::radius()`). A valid
+/// (meters, from the axis; e.g. `EllipticalAperture::radius()`). A valid
 /// positive finite `Some(a)` replaces the conservative window extent for
 /// $N_F$ and the paraxial angle; `None` or degenerate values fall back.
 pub fn regime_report_with(band: &BandField, z: f64, aperture: Option<f64>) -> RegimeReport {

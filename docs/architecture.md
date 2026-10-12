@@ -36,7 +36,8 @@ Phase 5 decision point.
 | `common` | Angle newtype (radians, derefs to f64), `J` imaginary unit | `Angle`, `J` |
 | `wave` | Scalar source/beam parameter records (pre-sampling) | `Wavelength`, `Polarization`, `Wave` |
 | `field` | Complex sample grids; wavelength decoupled from geometry | `Field`, `BandField`, `FieldError` |
-| `element` | Local field transformations; element taxonomy | `Element` trait, `CircularAperture`, `OpticsError`, `ElementShape`, `ElementKind`, `Extent`, `Material` |
+| `element` | Local field transformations; element taxonomy | `Element` trait, `EllipticalAperture`, `RectangularAperture`, `OpticsError`, `ElementShape`, `ElementKind`, `Extent`, `Material` |
+| `sources` | Closed-form field initializers → `BandField` | `GaussianBeam`, `gaussian`, `SourcesError` |
 | `propagation` | Wave-optics engines + regime diagnostics | `asm`, `fresnel`, `fraunhofer`, `regime` (public); `fft` (private) |
 
 ### 2.1 `field` — the two-layer split
@@ -62,14 +63,20 @@ transmission function onto the sampled plane; grid dimensions, pitch, and
 wavelength are preserved. An element never resamples or propagates — the
 Fresnel/Fraunhofer regime of the downstream pattern is judged by the Fresnel
 number $N_F = a^2/(\lambda z)$ at propagation time (see `physics.md` §9), so
-elements expose aperture geometry (`CircularAperture::radius`) for Phase 2+
-regime guidance.
+elements expose footprint half-extents (`EllipticalAperture::semi_axes`,
+`EllipticalAperture::radius`, `RectangularAperture::half_width`, and the
+conservative `Element::extent`) for Phase 2+ regime guidance. `OpticsError`
+validates geometry in **footprint half-extents** shared by all aperture
+shapes.
 
-`CircularAperture` (first concrete element): ideal hard-edge binary mask,
-boundary-inclusive; rejects footprints exceeding the grid (`OutsideField`).
-`shape`/`kind`/`material`/`extent` accessors are taxonomy metadata;
-`material` is unused by the Phase-1 mask (reserved for refractive/absorptive
-models).
+Apertures (hard-edge binary masks, boundary-inclusive; footprints exceeding
+the grid are rejected with `OutsideField`): `EllipticalAperture` — semi-axes
+$(a, b)$, with the **circle as the axis-symmetric special case**
+(`EllipticalAperture::circle`, `radius() -> Option<f64>`; task-b decision
+2026-10-12 superseded the former `CircularAperture`), and
+`RectangularAperture` — half-widths $(a, b)$. `shape`/`kind`/`material`/
+`extent` accessors are taxonomy metadata; `material` is unused by the
+hard-edge masks (reserved for refractive/absorptive models).
 
 ### 2.3 `propagation` — engines
 

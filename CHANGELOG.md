@@ -26,6 +26,21 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   serialization; `sources` is a new top-level module returning
   `BandField`s (multiband-ready by construction).
 
+### Decisions (Phase-3 task-b review, 2026-10-12, user)
+
+- **Apertures unified under the ellipse**: no separate circular element —
+  `EllipticalAperture` carries the circle as its axis-symmetric special case
+  (`EllipticalAperture::circle(r, center)`; `radius() -> Option<f64>` is
+  `Some` exactly when $a == b$; `ElementShape::Circle` reported in that
+  case). `CircularAperture` removed (breaking; call sites migrated).
+- **`OpticsError` generalized to footprint half-extents**: `InvalidAperture`
+  and `OutsideField` now carry `(half_x, half_y)` instead of a
+  circle-specific `radius` — one error taxonomy for all aperture shapes
+  (breaking; variant usage was confined to element.rs unit tests).
+  `Element::extent` for non-circular apertures returns the **conservative**
+  larger half-extent $\max(a, b)$ for regime gating; per-axis geometry
+  stays on the concrete accessors.
+
 ### Added
 
 - `sources` module (`src/sources.rs`, Phase 3 task a, decision D3): closed-form
@@ -54,6 +69,34 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   ($<10^{-3}$ Frobenius — sign-convention pin); $u(-z) = \overline{u(z)}$
   mirror symmetry; off-center waist translates by integer samples;
   beam/plane/wavelength/grid validation.
+- `EllipticalAperture` (`src/element.rs`, Phase 3 task b): ideal hard-edge
+  binary amplitude mask $t = 1$ iff $(x-x_c)^2/a^2 + (y-y_c)^2/b^2 \le 1$
+  (semi-axes meters, boundary inclusive — same convention as the former
+  circle); circle special case via `circle()`/`radius()`; `apply` uses the
+  division-free axis-multiplied predicate
+  $b^2\Delta x^2 + a^2\Delta y^2 \le a^2b^2$.
+- `RectangularAperture` (`src/element.rs`, Phase 3 task b): hard-edge mask
+  $t = 1$ iff $|x-x_c| \le a \land |y-y_c| \le b$ (half-widths meters,
+  edges inclusive; square = $a == b$ special case); far field is the
+  separable sinc² pattern already validated in `tests/phase2.rs`.
+- Element unit tests (10): per-shape constructor validation, circle
+  special-case reporting, bounding-box `OutsideField` rejection with
+  diagnostics, boundary-inclusive mask geometry, power reduction = area
+  ratio ($\pi ab$ and $4ab$ over $WH$, 3%), interior phase-ramp
+  preservation, `dyn Element` dispatch incl. conservative extent.
+
+### Changed
+
+- `OpticsError` variants carry footprint half-extents (see Decisions);
+  `CircularAperture` references in `lib.rs` quick-start, `regime`/
+  `fraunhofer` docs, `docs/architecture.md`, `docs/physics.md`, and the
+  integration tests migrated to `EllipticalAperture::circle`.
+
+### Removed
+
+- `CircularAperture` — superseded by `EllipticalAperture::circle` (task-b
+  review decision, 2026-10-12); mask predicate, validation, and regime
+  pairing preserved.
 
 ## [0.2.0] - 2026-10-12
 

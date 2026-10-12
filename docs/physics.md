@@ -233,7 +233,7 @@ pattern.
   \pi N_F$ at source half-extent $r$, with
   $$N_F = \frac{r^2}{\lambda|z|} \le \texttt{max\_n\_f}\ (\text{default } 1.0).$$
   $r$ is the declared `FraunhoferConfig::aperture_extent` when given (the
-  physically relevant source size — e.g. `CircularAperture::radius()`),
+  physically relevant source size — e.g. `EllipticalAperture::radius()`),
   else the conservative axis-to-window-edge extent. The condition is a
   property of the *source*, not the sampling window; the declared-extent
   option (user decision 2026-10-11) prevents small apertures in large

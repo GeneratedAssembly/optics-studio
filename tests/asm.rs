@@ -19,7 +19,7 @@
 use std::f64::consts::PI;
 
 use num_complex::Complex64;
-use optics_rs::element::{CircularAperture, Element};
+use optics_rs::element::{Element, EllipticalAperture};
 use optics_rs::field::{BandField, Field};
 use optics_rs::propagation::asm::{AsmConfig, PropagationError, propagate, sampling_report};
 
@@ -193,7 +193,7 @@ fn airy_pattern_far_field() {
     );
 
     let band = BandField::uniform(1.0, 0.0, n, n, dx, dx, LAMBDA).unwrap();
-    let ap = CircularAperture::new(a, (0.0, 0.0)).unwrap();
+    let ap = EllipticalAperture::circle(a, (0.0, 0.0)).unwrap();
     let masked = ap.apply(&band).unwrap();
     let far = propagate(&masked, z, &AsmConfig::default()).unwrap();
 

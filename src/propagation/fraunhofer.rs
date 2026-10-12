@@ -44,7 +44,7 @@
 //! the frequency map $f = r_\perp/(\lambda z)$ are measured from it.
 //! [`FraunhoferConfig::source_pos`] sets that axis explicitly (meters, field
 //! coordinates; `None` = grid origin). The axis must be given whenever the
-//! source is displaced — e.g. `CircularAperture::new(a, (x_s, y_s))` pairs
+//! source is displaced — e.g. `EllipticalAperture::circle(a, (x_s, y_s))` pairs
 //! with `source_pos: Some((x_s, y_s))` — and is honored exactly: an input
 //! linear-phase ramp $e^{i2\pi(f_s \xi + g_s \eta)}$, $f_s = x_s/(\lambda z)$,
 //! re-centers the evaluated frequency grid on the axis (no interpolation),
@@ -132,7 +132,7 @@ pub struct FraunhoferConfig {
     /// The Fraunhofer prefactor chirp and the frequency map
     /// $f = r_\perp/(\lambda z)$ are centered on the axis, so the axis
     /// reference must be explicit whenever the source is off-axis — e.g.
-    /// `CircularAperture::new(a, (x_s, y_s))` pairs with
+    /// `EllipticalAperture::circle(a, (x_s, y_s))` pairs with
     /// `source_pos: Some((x_s, y_s))`. The pattern is then computed about
     /// $(x_s, y_s)$: frequencies $f = (X - x_s)/(\lambda z)$ (exactly, via
     /// a linear-phase input ramp — no interpolation) and chirp
@@ -144,7 +144,7 @@ pub struct FraunhoferConfig {
     pub source_pos: Option<(f64, f64)>,
     /// True source half-extent $a$ (meters, from the axis, applied to both
     /// axes; use the larger half-side for rectangles — e.g.
-    /// `CircularAperture::radius()`).
+    /// `EllipticalAperture::radius()`).
     ///
     /// The far-field condition $N_F = a^2/(\lambda|z|) \le 1$ is a property
     /// of the *source*, not of the sampling window: a 0.2 mm aperture in a
