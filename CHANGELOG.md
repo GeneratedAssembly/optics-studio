@@ -7,6 +7,11 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-12
+
+Phase 2: Fresnel (TF + convolution) and Fraunhofer propagation, regime
+guidance, off-axis modeling, review-driven sampling guards.
+
 ### Decisions (approved in planning check-ins, 2026-10-11, Phase 2)
 
 - **FFT normalization migrated to NumPy convention** (Phase 2 task-1
