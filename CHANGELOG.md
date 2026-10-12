@@ -7,6 +7,92 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Decisions (approved in planning check-ins, 2026-10-12, Phase 4)
+
+- **Phase 4 scope — RS first kind only**: the exact Kirchhoff integral
+  couples the boundary field with its unknown normal derivative; the
+  antisymmetric (Dirichlet) Green's function of the **first kind** drops
+  the derivative term and consumes *only sampled field values* — the data
+  a `BandField` carries. The second kind (Neumann, needs $\partial u/\partial
+  n$) is deliberately excluded: estimating it as $\approx -iku$ would
+  reintroduce the inconsistent-boundary approximation RS theory avoids.
+  The two differ only by the $O(1/kr)$ obliquity term under the book's
+  assumptions (7)–(8), and both reduce to the same paraxial kernel.
+- **RS ≡ ASM is not new physics** (textbook Sec. 2.2.2/3.2: RS propagation
+  *is* the plane-wave spectrum): the engine's deliverable is a **third
+  discretization** (spatially sampled spherical kernel) for cross-model
+  validation against ASM (spectral transfer) and Fresnel (paraxial), plus
+  the exact-spherical phase where the paraxial truncation matters.
+- **Direct-integral form is test-only**: the $O(n^4)$ RS-I quadrature lives
+  in `tests/common` as reference truth (dependency policy, like the $J_1$/
+  Fresnel-integral quadrature); the library ships the FFT convolution form.
+- **$z = 0$ rejected** (`InvalidDistance`): the RS-I impulse response tends
+  to a $\delta$-distribution there — sampleable nowhere; use ASM for zero
+  steps (deliberate divergence from the Fresnel-convolution identity
+  special case).
+- **Regime ladder unchanged**: RS carries the convolution form's
+  kernel-sampling condition (fails at short $|z|$; ASM remains the exact
+  fallback) — documented as a cross-validation engine, not a recommendation.
+- **`fft.rs` shift helpers stay reserved** (Phase 5 export paths),
+  `#[allow(dead_code)]` persists.
+
+### Added
+
+- `propagation::rayleigh_sommerfeld` module (Phase 4 task a):
+  Rayleigh–Sommerfeld **first-kind** convolution engine — impulse response
+  $h = \frac{|z|}{2\pi r^2}\big(\frac{1}{r} - i\,\mathrm{sgn}(z)k\big)
+  e^{i\,\mathrm{sgn}(z)kr}$, $r = \sqrt{x^2+y^2+z^2}$ (textbook Eq. 2.8
+  adapted to the crate's $e^{+ikz}$ frame; the book's $e^{-ikr}$ form is
+  the conjugate = back-propagation kernel), sampled on the padded grid in
+  DFT order with the $\Delta x\,\Delta y$ quadrature weight folded in;
+  same embed/transform/extract pipeline as `fresnel::propagate_convolution`.
+  Closed-form $O(1)$ kernel guard: spherical rim step
+  $k(r_{hi} - r_{lo})$ at the Nyquist-straddling pair + obliquity bound
+  $k\Delta/(1 + k^2z^2) < \pi$ — **always weaker than the paraxial Fresnel
+  step** ($|x|/r \le 1$: the spherical phase gradient saturates where the
+  chirp's grows without bound); `strict` raises `AliasingRisk` immediately
+  (densification worsens kernel sampling — no mitigation loop).
+  `RayleighSommerfeldConfig { padding, strict }` (defaults 2.0/true);
+  `RayleighSommerfeldSamplingReport` (kernel steps +
+  `max_phase_error_vs_fresnel`/`paraxial_ok` — the non-paraxial excess
+  $k(r_c - |z| - \rho_c^2/2|z|)$ the Fresnel models drop, closed-form at
+  the padded corner) with remedy-hint `Display`;
+  `RayleighSommerfeldError` (`InvalidDistance` non-finite **or zero**,
+  `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`,
+  `AliasingRisk { report: Box<…> }`). Signed-$z$ mirror
+  $h(\cdot,-z) = \overline{h(\cdot,z)}$ bit-exact by construction.
+- RS unit tests (9, `src/propagation/rayleigh_sommerfeld.rs`): paraxial
+  kernel reduction = Fresnel convolution kernel (relative $<10^{-6}$,
+  small-angle geometry); conjugate back-propagation kernel (bit-exact);
+  delta input = sampled kernel anchor ($10^{-12}$); **RS ≡ ASM engine
+  agreement** on a smooth Gaussian at critical-sampling scale (100 kernel
+  zones, rim step 2.0 rad, rel $<5\cdot10^{-2}$); guard closed-form
+  brackets a brute-force unwrapped-phase sweep (≥ sweep, < 2× sweep);
+  strict raises immediately and padding provably worsens the step;
+  $z = 0$/inf/NaN rejection; round trip $<10^{-2}$ (sign-convention pin);
+  config defaults.
+- `tests/phase4.rs` (new integration suite, 5 tests, task b) with
+  `tests/common::rs_direct` — $O(n^4)$ direct RS-I quadrature (linear
+  convolution over a kernel offset table) as reference truth: FFT engine =
+  direct linear sum up to guard-controlled wrap (rel $<10^{-2}$; geometry
+  n=48, d=2 µm, z=2 mm — rim step 1.2 rad, ~9 kernel zones); **three
+  discretizations agree** (RS↔ASM and direct↔ASM $<2\cdot10^{-2}$);
+  **Fresnel diverges where its own report says** — aperture geometry
+  (a=20 µm, n=32, d=4 µm, z=3 mm; corner binomial truncation ≈0.29 rad per
+  `max_phase_error_vs_asm`): RS vs truth $<2\cdot10^{-2}$ while Fresnel-TF
+  error exceeds $4\times$ the RS error (and stays $<0.3$); $+z/-z$ round
+  trip $<3\cdot10^{-2}$ (measured kernel-window ripple ≈ $1/$zones — a
+  conjugate-kernel sign error would give $O(1)$); $|H_{RS}| = 1$ power
+  conservation on the Gaussian geometry ($<10^{-3}$). Calibration notes:
+  no power statements on the aperture geometry — its Airy-tail crop past
+  the window (~11%) is physical spreading, not an artifact.
+- Phase-4 documentation (task c): `docs/physics.md` §6.3 (RS first kind —
+  kernel, first-vs-second-kind rationale, PWS identification, paraxial
+  reduction, guard), §8 ladder note, §10 validity entry, §11 rows 15–19 +
+  RS unit-test paragraph, References (Sec. 2.1, Eq. 2.8, Sec. 2.2.2/3.2);
+  `docs/architecture.md` engine/diagram/error-table/testing/roadmap;
+  `src/lib.rs` engine blurb.
+
 ## [0.3.0] - 2026-10-12
 
 Phase 3: thin element library — unified apertures (`EllipticalAperture`

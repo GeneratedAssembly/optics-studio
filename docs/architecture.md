@@ -1,9 +1,9 @@
 # Architecture — `optics-rs`
 
 Module map, data flow, trait specs, and error taxonomy for the Diffractive
-Optics Engineering Suite (Phases 1–3: field representation, ASM/Fresnel/
-Fraunhofer propagation + regime guidance, thin element library, `sources`
-initializers).
+Optics Engineering Suite (Phases 1–4: field representation, ASM/Fresnel/
+Fraunhofer/Rayleigh–Sommerfeld propagation + regime guidance, thin element
+library, `sources` initializers).
 The physics rationale lives in [`physics.md`](physics.md); development
 protocol in [`../agents.md`](../agents.md).
 
@@ -25,6 +25,7 @@ protocol in [`../agents.md`](../agents.md).
             ├── asm        (exact Angular Spectrum)
             ├── fresnel    (paraxial: transfer function + convolution)
             ├── fraunhofer (far-field FT, regime-gated)
+            ├── rayleigh_sommerfeld (exact RS-I spherical kernel, convolution)
             └── regime     (diagnostics: N_F, guards, engine recommendation)
 ```
 
@@ -42,7 +43,7 @@ Phase 5 decision point.
 | `field` | Complex sample grids; wavelength decoupled from geometry | `Field`, `BandField`, `FieldError` |
 | `element` | Local field transformations; element taxonomy | `Element` trait, `EllipticalAperture`, `RectangularAperture`, `ThinLens`, `PhaseMask`, `BlazedGrating`, `ClearAperture`, `OpticsError`, `ElementShape`, `ElementKind`, `Extent`, `Material` |
 | `sources` | Closed-form field initializers → `BandField` | `GaussianBeam`, `gaussian`, `SourcesError` |
-| `propagation` | Wave-optics engines + regime diagnostics | `asm`, `fresnel`, `fraunhofer`, `regime` (public); `fft` (private) |
+| `propagation` | Wave-optics engines + regime diagnostics | `asm`, `fresnel`, `fraunhofer`, `rayleigh_sommerfeld`, `regime` (public); `fft` (private) |
 
 ### 2.1 `field` — the two-layer split
 
@@ -160,6 +161,23 @@ transparent `FieldError` carry.
   and off-axis support. `FraunhoferConfig { strict, max_n_f, source_pos,
   aperture_extent }`; `regime_report(band, z, cfg)` exposes $N_F$, extent
   provenance, and the dropped-quadratic bound.
+- `rayleigh_sommerfeld` (public, Phase 4): Rayleigh–Sommerfeld **first-kind**
+  convolution engine — the exact spherical impulse response
+  $h = \frac{|z|}{2\pi r^2}(\frac{1}{r} - i\,\mathrm{sgn}(z)k)e^{i\,\mathrm{sgn}(z)kr}$
+  (textbook Eq. 2.8 in the crate's $e^{+ikz}$ frame) sampled on the padded
+  grid in DFT order, same embed/transform/extract pipeline as the Fresnel
+  convolution form. First kind only (Dirichlet Green's function needs just
+  the sampled field; the second kind would need $\partial u/\partial n$ —
+  deliberately excluded). Continuous operator equals ASM (RS *is* the
+  plane-wave spectrum, Sec. 2.2.2/3.2): the engine is a third
+  discretization for cross-validation, not new physics. Closed-form $O(1)$
+  kernel guard (spherical rim step + obliquity bound; always weaker than
+  the paraxial Fresnel step; no densification loop), `strict` raises
+  immediately; $z = 0$ rejected (distributional kernel).
+  `RayleighSommerfeldConfig { padding, strict }`;
+  `RayleighSommerfeldSamplingReport` carries the kernel steps plus
+  `max_phase_error_vs_fresnel`/`paraxial_ok` (the non-paraxial excess the
+  Fresnel models drop).
 - `regime` (public): **diagnostics only** (approved decision — no
   auto-dispatch). `fresnel_number(a, lambda, z)` and
   `regime_report(_with)(band, z[, aperture])` evaluate the criteria ladder
@@ -188,7 +206,7 @@ Wave (source params) ──────Phase 5────────→ Field 
                                                         │
               regime::regime_report(band, z) ──(diagnostic)──┐
                                                         ↓     ↓
-              asm::propagate | fresnel::propagate[_convolution] | fraunhofer::propagate
+              asm::propagate | fresnel::propagate[_convolution] | fraunhofer::propagate | rayleigh_sommerfeld::propagate
                                                         │  free space z1−z0, guards/mitigation
                                                         ↓
                                             BandField (plane z1) ──→ … → detector
@@ -218,10 +236,12 @@ proactively via the `*_report` functions.
 | `PropagationError` | `propagation::asm` | `InvalidDistance(z)` (non-finite only — signed z is valid), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `AliasingRisk { report: Box<SamplingReport> }` |
 | `FresnelError` | `propagation::fresnel` | same taxonomy; `AliasingRisk { report: Box<FresnelSamplingReport> }` (TF form: post-mitigation failure; convolution form: immediate kernel failure) |
 | `FraunhoferError` | `propagation::fraunhofer` | `InvalidDistance(z)` (non-finite **or zero** — far-field map singular at z=0), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `RegimeViolation { report: Box<FraunhoferReport> }` |
+| `RayleighSommerfeldError` | `propagation::rayleigh_sommerfeld` | `InvalidDistance(z)` (non-finite **or zero** — RS-I kernel is a $\delta$-distribution at z=0), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `AliasingRisk { report: Box<RayleighSommerfeldSamplingReport> }` (kernel undersampled; immediate — no densification) |
 
-`sampling_report` (asm, fresnel) and `regime_report` (fraunhofer, regime)
+`sampling_report` (asm, fresnel, rayleigh_sommerfeld) and `regime_report`
+(fraunhofer, regime)
 expose the criteria before propagation; `Display` implementations print all
-diagnostics plus remedy hints. Unifying the three engine error enums into
+diagnostics plus remedy hints. Unifying the four engine error enums into
 one propagation-level type is a later API decision.
 
 ## 5. Testing strategy
@@ -233,18 +253,26 @@ one propagation-level type is a later API decision.
   step = sweep maximum, complementarity, critical-sampling TF-vs-convolution
   agreement $<10^{-6}$, delta = sampled kernel), Fraunhofer (delta prefactor
   identity, DC concentration, Parseval power, regime gate, off-axis ramp),
+  Rayleigh–Sommerfeld (paraxial kernel reduction $=$ Fresnel kernel,
+  delta $=$ sampled kernel, bit-exact conjugate mirror, guard brackets a
+  brute-force sweep, padding-worsens-kernel, RS $\equiv$ ASM on a smooth band),
   regime ladder outcomes, element mask geometry, thin-lens Fourier property +
   dispersive closure + DOE-lens-equals-thin-lens sample-exact, grating sawtooth
   wrap + integer-$2\pi$ depth = tilted plane wave, `ClearAperture` predicates,
   uniform orientation (defaults/validation/rotated stops/bounding box), `Angle`
   $[0,2\pi)$ wrapping, Gaussian $q$-form cross-engine agreement + $u(-z)$
   conjugate.
-- **Physical validation** (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`;
+- **Physical validation** (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`,
+  `tests/phase4.rs`;
   shared analytics in `tests/common/mod.rs` — dependency-free quadrature for
-  $J_1$, Fresnel integrals): fourteen analytics-based integration tests with
+  $J_1$, Fresnel integrals, and the direct RS-I convolution integral): nineteen
+  analytics-based integration tests with
   stated tolerances — see the mapping table in `physics.md` §11. `tests/phase3.rs`
   validates grating orders through the Fraunhofer engine (kinoform 2π→+1,
-  4π→+2, π→40/40 split).
+  4π→+2, π→40/40 split). `tests/phase4.rs` validates the RS engine against the
+  direct quadrature, ASM, and Fresnel (FFT$=$direct, three-discretizations
+  agree, Fresnel diverges where its reported paraxial error says, round trip,
+  power conservation).
 - Gates: `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`,
   `cargo doc` (docstring/unit-documentation standard).
 
@@ -263,8 +291,15 @@ one propagation-level type is a later API decision.
   (center-relative, shared `ClearAperture`); `BlazedGrating` with
   Fraunhofer-engine order validation; uniform element orientation with
   implicit-wrapping `Angle` (breaking).
-- **Phase 4** (Rayleigh–Sommerfeld): direct-integral/convolution form,
-  cross-model consistency vs ASM/Fresnel.
+- **Phase 4** (Rayleigh–Sommerfeld) — **implemented (tasks a–b), release
+  decision pending**: `rayleigh_sommerfeld::propagate` first-kind
+  convolution engine (exact spherical kernel, closed-form guard, $z=0$
+  rejected; second kind excluded — no $\partial u/\partial n$ data model),
+  `tests/phase4.rs` cross-model consistency vs ASM/Fresnel with a
+  test-only direct-quadrature reference (planned "direct-integral form"
+  delivered as the validation truth, keeping the lib minimal); regime
+  ladder unchanged (RS outside the recommendation — cross-validation
+  engine).
 - **Phase 5** (sources & output): multimode/HG/LG initializers,
   visualization/export (backend = decision point), API ergonomics
   (convenience methods / `Propagator` trait). PSF graphing and standard

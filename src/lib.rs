@@ -4,8 +4,10 @@
 //! optical elements: scalar complex fields sampled on 2D grids, advanced
 //! through free space with selectable engines — exact **Angular Spectrum**
 //! (`propagation::asm`), paraxial **Fresnel** in transfer-function and
-//! convolution forms (`propagation::fresnel`), and the **Fraunhofer**
-//! far-field limit (`propagation::fraunhofer`) — with sampling guards,
+//! convolution forms (`propagation::fresnel`), the **Fraunhofer** far-field
+//! limit (`propagation::fraunhofer`), and the exact-kernel
+//! **Rayleigh–Sommerfeld** first kind (`propagation::rayleigh_sommerfeld`) —
+//! with sampling guards,
 //! regime diagnostics (`propagation::regime`), and locally acting
 //! [`element::Element`]s (apertures, thin lens, phase masks — the DOE
 //! interface — and blazed gratings, with thick elements in later phases),

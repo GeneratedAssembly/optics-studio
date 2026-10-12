@@ -1,10 +1,11 @@
 # Physics — Wave-Optics Propagation in `optics-rs`
 
 This document details the mathematical models, transfer functions, and
-validity regimes implemented in Phases 1–3 (ASM exact; Fresnel transfer-
-function and convolution forms; Fraunhofer far field; regime guidance; thin
-elements — apertures, dispersive thin lens, phase-mask DOE interface, blazed
-grating — and the Gaussian-beam source).
+validity regimes implemented in Phases 1–4 (ASM exact; Fresnel transfer-
+function and convolution forms; Fraunhofer far field; Rayleigh–Sommerfeld
+first kind; regime guidance; thin elements — apertures, dispersive thin
+lens, phase-mask DOE interface, blazed grating — and the Gaussian-beam
+source).
 The ultimate source of truth is
 *Diffractive Optics: Design, Fabrication, and Test* (SPIE TT95, the textbook
 PDF at the repository root); references below use its numbering.
@@ -149,11 +150,12 @@ $\approx \pi$ by construction ($k\lambda/2$ at the mask edge), which is
 precisely why prevention-by-band-limiting is the default and the guard rarely
 fires; the guard matters for `band_limited = false` runs.
 
-## 6. Fresnel propagation (Phase 2)
+## 6. Fresnel and Rayleigh–Sommerfeld propagation (Phases 2, 4)
 
-Two discrete forms of the paraxial propagator, related by the convolution
-theorem and complementary in sampling. Expanding the ASM direction cosine
-$\gamma = \sqrt{1-s} \approx 1 - s/2$ with $s = (\lambda f_x)^2 +
+Two discrete forms of the paraxial propagator (§§6.1–6.2), related by the
+convolution theorem and complementary in sampling, plus the exact
+spherical-kernel parent both reduce to (§6.3). Expanding the ASM direction
+cosine $\gamma = \sqrt{1-s} \approx 1 - s/2$ with $s = (\lambda f_x)^2 +
 (\lambda f_y)^2$ gives the Fresnel transfer function
 
 $$H_F(f_x, f_y; z) = e^{\,ikz}\,\exp\!\big(-i\pi\lambda z\,(f_x^2 + f_y^2)\big).$$
@@ -212,6 +214,62 @@ extent, coarser pitch, or longer $|z|$.
 Both forms share the module-level validation, signed-$z$ semantics
 ($h(\cdot,-z) = h(\cdot,z)^*$, $|H_F| = |h|$-based round trips are exact),
 and the embed/pad/extract pipeline.
+
+### 6.3 Rayleigh–Sommerfeld first kind (Phase 4)
+
+`rayleigh_sommerfeld::propagate` advances the field with the *exact*
+spherical impulse response rather than its paraxial (Fresnel) reduction.
+Textbook Sec. 2.1 derives the first-kind RS integral (Eq. 2.8); written in
+this crate's $e^{+ikz}$ convention the impulse response is
+
+$$h(x, y; z) = \frac{|z|}{2\pi r^2}\!\left(\frac{1}{r} - i\,\mathrm{sgn}(z)\,k\right)
+   e^{\,i\,\mathrm{sgn}(z)\,kr}, \qquad
+   r = \sqrt{x^2 + y^2 + z^2}, \qquad k = \frac{2\pi}{\lambda},$$
+
+where the $\big(\tfrac{1}{r} - i\,\mathrm{sgn}(z)k\big)$ factor is the
+**obliquity** carried by the Dirichlet Green's function. Propagation is the
+spatial convolution $U_z = U_0 \circledast h$, evaluated on the padded grid
+by the same embed/DFT-order-kernel/extract pipeline as §6.2.
+
+**Why first kind, not second.** The exact Kirchhoff surface integral couples
+the boundary field $u$ with its unknown normal derivative $\partial u/\partial
+n$. The antisymmetric (first-kind) image Green's function $G_- = 0$ on the
+plane drops the $\partial u/\partial n$ term, so the formula consumes *only
+the sampled field values* — the data a `BandField` actually carries. The
+second kind needs $\partial u/\partial n$; estimating it as $\approx -iku$
+would reintroduce exactly the inconsistent-boundary approximation RS theory
+exists to avoid. RS-II is therefore deliberately excluded.
+
+**Not new physics — a third discretization.** With the first-kind kernel the
+transfer function is exactly the ASM's $e^{ikz\gamma}$ (the book makes the
+identification in Sec. 2.2.2/3.2: RS propagation *is* the plane-wave
+spectrum). The engine's value is a spatial-sampled counterpart to ASM's
+spectral one: RS $\leftrightarrow$ ASM agreement validates both discretizations,
+and RS $\leftrightarrow$ Fresnel quantifies the paraxial truncation — the
+Fresnel report's `max_phase_error_vs_asm` predicts exactly where the paraxial
+model diverges from the RS truth (`tests/phase4.rs`).
+
+**Paraxial reduction.** With $r \approx |z|$ and $1/r \ll k$ the kernel
+becomes $\frac{e^{ikz}}{i\lambda z}\exp\!\big(i\pi\frac{x^2+y^2}{\lambda z}\big)$
+— the §6.2 Fresnel kernel (textbook Eq. 2.24), pinned by the unit test
+`kernel_reduces_to_fresnel_paraxially`.
+
+**Kernel sampling (guard).** The kernel phase is $\phi = \mathrm{sgn}(z)kr -
+\arctan(kr)$; along one axis the geometric term is convex in $|x|$, so the
+worst adjacent-sample step is closed-form at the Nyquist-straddling pair
+$x_{hi} = \tfrac{n_{\text{pad}}}{2}\Delta x$, $x_{lo} = x_{hi} - \Delta x$,
+with the obliquity gradient added as a bound:
+
+$$\Delta\phi_x^{\max} = k\big(r(x_{hi}) - r(x_{lo})\big) + \frac{k\,\Delta x}{1 + k^2 z^2} < \pi.$$
+
+Because $|x|/r \le 1$, this step is **always smaller than the Fresnel
+convolution step** of §6.2 (the paraxial flattening grows the phase gradient
+without bound; the spherical $kr$ saturates at $k\sin\theta \le k$) — the RS
+form tolerates wider padded grids than its paraxial sibling. Densification
+again *worsens* kernel sampling, so `strict` mode raises `AliasingRisk`
+immediately. $z = 0$ is **rejected** (the kernel is a $\delta$-distribution
+there; use ASM for a zero step). Signed-$z$ mirror $h(\cdot,-z) =
+\overline{h(\cdot,z)}$ is bit-exact by construction.
 
 ## 7. Fraunhofer propagation (Phase 2)
 
@@ -278,6 +336,13 @@ Note the guard hierarchy: the rule-2 kernel condition
 ($\lambda z > (n-1)\Delta^2$) is *weaker* than far field
 ($N_F \le 1 \Leftrightarrow \lambda z \ge r^2$ at window extent, a factor
 $\sim n/4$ stronger) — far field implies kernel-sampled, not conversely.
+
+The Phase-4 Rayleigh–Sommerfeld engine (§6.3) is **not** in the ladder: it
+carries the convolution form's kernel-sampling condition (fails at short
+$|z|$; ASM remains the exact fallback there), and its role is
+cross-validation — a third discretization of the same physics, plus the
+exact-spherical kernel where the paraxial truncation matters while the
+geometry stays guard-passing.
 
 ## 9. Elements: local interaction, propagation decides regimes
 
@@ -447,6 +512,12 @@ test 7).
 - Fresnel forms (§6) add the paraxial restriction (truncation error
   reported); Fraunhofer (§7) additionally requires the far-field regime
   ($N_F \le$ threshold) — the engines enforce or report these per geometry.
+- Rayleigh–Sommerfeld first kind (§6.3) keeps the exact spherical phase but
+  is still scalar theory under the book's assumptions (7)–(8): aperture and
+  $|z|$ large compared with $\lambda$ (it is not a vector/Richards–Wolf
+  model), and the sampled-kernel discretization carries its own window
+  truncation ($\sim 1/\text{zones}$, zones $= R^2/(\lambda|z|)$ at the
+  padded rim).
 - Wraparound controlled by padding + band-limiting; energy leaving the
   physical window (crop) is lost from the returned field — the validation
   suite sizes grids so this is $\le 10^{-9}$ relative.
@@ -458,7 +529,7 @@ test 7).
   closures are reserved for refractive/thick models (Phase 6), and the
   grating depth-to-phase relation (§9.4) is fabrication-side, not applied.
 
-## 11. Verification mapping (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`)
+## 11. Verification mapping (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`, `tests/phase4.rs`)
 
 | # | Test | Physics statement | Analytic anchor | Tolerance |
 |---|---|---|---|---|
@@ -476,6 +547,11 @@ test 7).
 | 12 | Kinoform blaze (phase3) | $\Phi = 2\pi$ sawtooth $\to$ pure order $+1$ at $x_1 = \lambda z/\Lambda$ | Eqs. 1.1/2.26/5.1; Sec. 2.4.2, Eq. 2.27 $k=1$ | lobe $\pm 2$ bins; $>85\%$ in order, $<3\%$ leak to $0/-1$ |
 | 13 | Double-depth blaze (phase3) | $\Phi = 4\pi \to$ order $+2$ at $x_2 = 2\lambda z/\Lambda$ | Eq. 2.27 $k=2$ | $>80\%$ in lobe |
 | 14 | Half-wave sawtooth (phase3) | $\Phi = \pi \to \approx 40/40$ split orders $0/+1$, $-1$ weak | $|c_m|^2 = 4/(\pi^2(1-2m)^2)$ | each $0.30$–$0.55$; $f_{-1} < 0.10$ |
+| 15 | FFT vs direct quadrature (phase4) | circular (engine) $=$ linear (sum) up to guard-controlled wrap | RS-I integral, Eq. 2.8 kernel | rel Frobenius $< 10^{-2}$ |
+| 16 | Three discretizations agree (phase4) | spatial-kernel (FFT + direct) $=$ spectral-transfer (ASM) — RS *is* the PWS | Sec. 2.2.2/3.2 identification | pairwise $< 2\cdot10^{-2}$ |
+| 17 | Fresnel diverges where reported (phase4) | paraxial truncation vs RS truth at aperture-rich corner bins | $k|z|s^2/8 \approx 0.29$ rad; report `max_phase_error_vs_asm` | RS $< 2\cdot10^{-2}$; Fresnel $> 4\times$ RS error, $< 0.3$ |
+| 18 | Round trip $+z/-z$ (phase4) | conjugate spherical kernel inverts the operator | $h(\cdot,-z) = \overline{h(\cdot,z)}$ | rel $< 3\cdot10^{-2}$ ($\sim 1/$zones ripple) |
+| 19 | Power conservation (phase4) | $\lvert H_{RS}\rvert = 1$ on band | discrete power invariant | rel drift $< 10^{-3}$ |
 
 Element/source physics additionally pinned by unit tests in `src/element.rs`
 and `src/sources.rs`: thin-lens Fourier property ($w_0' = \lambda f/\pi w_0$,
@@ -483,13 +559,20 @@ and `src/sources.rs`: thin-lens Fourier property ($w_0' = \lambda f/\pi w_0$,
 integer-$2\pi$ grating depth = tilted plane wave sample-exact, orientation
 defaults/validation/rotated stops, `Angle` $[0,2\pi)$ wrapping, Gaussian
 $q$-form cross-engine agreement ($<10^{-3}$) and $u(-z) = \overline{u(z)}$.
+RS physics additionally pinned in `src/propagation/rayleigh_sommerfeld.rs`:
+paraxial kernel reduction $=$ Fresnel kernel ($<10^{-6}$), bit-exact
+conjugate mirror, delta input $=$ sampled kernel ($10^{-12}$), guard
+closed-form brackets a brute-force sweep, RS $\equiv$ ASM on a smooth band.
 
 ## References
 
 1. *Diffractive Optics: Design, Fabrication, and Test* (workspace root PDF):
    Sec. 1.4 (Huygens, Fresnel zones), Eq. 1.1 (grating equation),
-   Sec. 2.2 (far field = FT of aperture), Eqs. 2.9, 3.5–3.13 (plane-wave
-   basis, direction cosines), Sec. 2.4 + Eqs. 2.25–2.29 (blazed grating,
+   Sec. 2.1 + Eqs. 2.1–2.8 (Maxwell $\to$ Helmholtz, assumptions (1)–(8),
+   Rayleigh–Sommerfeld first-kind integral), Sec. 2.2 (far field = FT of
+   aperture), Sec. 2.2.2 + Ch. 3 (RS $\leftrightarrow$ plane-wave-spectrum
+   identification), Eqs. 2.9, 3.5–3.13 (plane-wave basis, direction
+   cosines), Sec. 2.4 + Eqs. 2.25–2.29 (blazed grating,
    order angles and efficiencies), Sec. 2.5 (shadowing), Sec. 4.1.3
    (chromatic aberration: refractive power $\propto (n-1)c$), Sec. 4.2.1 +
    Eqs. 4.12–4.13 (diffractive lens = quadratic phase, zone radii
