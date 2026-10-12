@@ -7,6 +7,8 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-12
+
 Phase 3: thin element library — unified apertures (`EllipticalAperture`
 with the circle special case, `RectangularAperture`), `ThinLens` with
 dispersive $f(\lambda)$ closure, `PhaseMask` DOE interface, `BlazedGrating`

@@ -255,8 +255,8 @@ one propagation-level type is a later API decision.
   convolution propagators with reciprocal guards, Fraunhofer limit with
   regime gate, off-axis `source_pos`, declared `aperture_extent`, and
   diagnostics-only regime guidance.
-- **Phase 3** (element library, thin) — **implemented (tasks a–e.1),
-  release decision pending**: `sources` Gaussian initializer; apertures
+- **Phase 3** (element library, thin) — **complete, released as 0.3.0**:
+  `sources` Gaussian initializer; apertures
   unified into `EllipticalAperture` (circle special case) +
   `RectangularAperture` (breaking); `ThinLens` with dispersive $f(\lambda)$
   closure + `ClearAperture` stop; `PhaseMask` analytic-closure DOE interface
