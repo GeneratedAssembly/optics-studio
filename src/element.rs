@@ -20,6 +20,8 @@
 //!
 //! All spatial quantities are SI units (meters); angles in radians.
 
+use std::f64::consts::PI;
+
 use num_complex::Complex64;
 use thiserror::Error;
 
@@ -67,6 +69,23 @@ pub enum OpticsError {
         /// Field grid half-extent along y in meters, $(n_y - 1)\Delta y / 2$.
         grid_half_y: f64,
     },
+    /// The optical axis (phase-center) coordinates were not finite.
+    #[error("element axis needs finite coordinates (got ({center_x}, {center_y}) m)")]
+    InvalidAxis {
+        /// Axis x-coordinate in meters.
+        center_x: f64,
+        /// Axis y-coordinate in meters.
+        center_y: f64,
+    },
+    /// The dispersive focal closure returned a focal length that cannot
+    /// define a phase screen: zero (infinite power) or non-finite.
+    #[error("lens focal length f({lambda} m) = {f} m is invalid (must be non-zero and finite)")]
+    InvalidFocal {
+        /// Wavelength (m) at which the closure was evaluated.
+        lambda: f64,
+        /// Focal length (m) the closure returned.
+        f: f64,
+    },
 }
 
 /// Physical outline of an element's clear aperture.
@@ -83,6 +102,10 @@ pub enum ElementShape {
     /// Polygonal aperture: `(n_lines, angles)` with the vertex angles in
     /// radians.
     Poly((u8, Vec<f64>)),
+    /// No finite clear aperture: an unbounded pure-phase screen (e.g.
+    /// [`ThinLens`], task-c decision 2026-10-12 — stops are composed
+    /// separately by the caller).
+    Unbounded,
 }
 
 /// Functional class of an optical element.
@@ -124,6 +147,9 @@ pub enum Extent {
         /// Central thickness in meters.
         thickness: f64,
     },
+    /// Unbounded pure-phase screen: no clear aperture, so no finite extent
+    /// for regime gating (see [`ElementShape::Unbounded`]).
+    Unbounded,
 }
 
 /// All units are SI: wavelength in meters, angles in radians.
@@ -501,10 +527,243 @@ impl Element for RectangularAperture {
     }
 }
 
+/// Ideal **thin lens**: a quadratic phase screen with dispersive focal
+/// closure $f(\lambda)$ (approved Phase-3 decision D1) inside a circular
+/// **clear aperture** (task-c revision 2026-10-12: `extent` describes the
+/// lens, not the field — regime gating uses the lens's own aperture).
+///
+/// At the sampled plane the lens acts as
+///
+/// $$t(x, y; \lambda) = \begin{cases}
+///   \exp\!\Big(-i\,\frac{2\pi}{\lambda}\,
+///   \frac{(x - x_c)^2 + (y - y_c)^2}{2 f(\lambda)}\Big) & \rho \le a \\
+///   0 & \text{otherwise}\end{cases}$$
+///
+/// with optical axis $(x_c, y_c)$ (m, field coordinates), clear-aperture
+/// radius $a$ (m), and focal length $f$ (m) evaluated at the band's
+/// wavelength. Sign convention: $f > 0$ is **converging** — the negative
+/// quadratic phase matches the converging curvature of the $q$-form beam
+/// in [`crate::sources`] ($e^{+ikz}$ frame) and the textbook's lens
+/// construction, Eq. 4.13: zone radii $r_p^2 = 2fp\lambda$ impose $2\pi$
+/// phase steps, i.e. the same quadratic profile (Sec. 4.2.1). $f < 0$
+/// diverges; $f = 0$ is rejected ([`OpticsError::InvalidFocal`]).
+///
+/// The **field-wide special case** `clear_radius = None` (the earlier
+/// task-c form, kept for callers who compose their own stop) applies the
+/// phase over the whole sampled plane; it reports `Unbounded` shape/extent
+/// and regime gating must then use the *applied* stop.
+///
+/// Chromatic behavior (textbook Sec. 4.1.3): refractive power is linear in
+/// $n(\lambda)$, so blue focuses shorter — encode any material/DOE law in
+/// the closure; `fixed` is the non-dispersing sugar.
+// No `Clone`/`Debug`/`PartialEq` derives: the focal closure and `Material`
+// hold boxed functions; element identity is by value of its accessors.
+pub struct ThinLens {
+    f: Box<dyn Fn(f64) -> f64>, // focal length (m) as a function of wavelength (m)
+    clear_radius: Option<f64>,  // meters; None = field-wide (no stop)
+    center: (f64, f64),         // optical axis, meters, field coordinates
+    shape: ElementShape,
+    material: Material,
+}
+
+impl ThinLens {
+    /// Thin lens with focal closure `f` of wavelength (m), circular clear
+    /// aperture `clear_radius` (m; `None` = field-wide, no stop), and
+    /// optical axis at `center` (m, m) in field coordinates.
+    ///
+    /// The closure is evaluated per band at `apply` time; results must be
+    /// non-zero and finite (else [`OpticsError::InvalidFocal`]).
+    ///
+    /// # Errors
+    /// [`OpticsError::InvalidAperture`] if `clear_radius` is `Some` but not
+    /// positive and finite; [`OpticsError::InvalidAxis`] if either center
+    /// coordinate is not finite.
+    pub fn new(
+        f: impl Fn(f64) -> f64 + 'static,
+        clear_radius: Option<f64>,
+        center: (f64, f64),
+    ) -> Result<Self, OpticsError> {
+        match clear_radius {
+            Some(a) => validate_footprint(a, a, center)?,
+            None => {
+                let (cx, cy) = center;
+                if !cx.is_finite() || !cy.is_finite() {
+                    return Err(OpticsError::InvalidAxis {
+                        center_x: cx,
+                        center_y: cy,
+                    });
+                }
+            }
+        }
+        let shape = if clear_radius.is_some() {
+            ElementShape::Circle
+        } else {
+            ElementShape::Unbounded
+        };
+        Ok(Self {
+            f: Box::new(f),
+            clear_radius,
+            center,
+            shape,
+            // Non-absorbing, index-1 placeholder: the phase is carried by `f`.
+            material: Material::new(|_lambda, _angle| 1.0, |_lambda, _angle| 0.0),
+        })
+    }
+
+    /// Non-dispersing thin lens of focal length `f0` (m): the constant
+    /// closure $f(\lambda) \equiv f_0$. See [`ThinLens::new`] for the
+    /// `clear_radius` semantics.
+    ///
+    /// # Errors
+    /// As [`ThinLens::new`].
+    pub fn fixed(
+        f0: f64,
+        clear_radius: Option<f64>,
+        center: (f64, f64),
+    ) -> Result<Self, OpticsError> {
+        Self::new(move |_lambda| f0, clear_radius, center)
+    }
+
+    /// Focal length (m) at wavelength `lambda` (m) from the closure.
+    pub fn focal_at(&self, lambda: f64) -> f64 {
+        (self.f)(lambda)
+    }
+
+    /// Clear-aperture radius in meters — `Some(a)` for the stopped lens,
+    /// `None` for the field-wide special case.
+    pub fn clear_radius(&self) -> Option<f64> {
+        self.clear_radius
+    }
+
+    /// Optical axis $(x_c, y_c)$ in meters (field coordinates).
+    pub fn center(&self) -> (f64, f64) {
+        self.center
+    }
+
+    /// Worst adjacent-sample phase step of the lens quadratic on `band`'s
+    /// grid, in radians — a closed-form $O(1)$ sampling diagnostic (no
+    /// sweep): with $k = 2\pi/\lambda$ and $r$ the farthest on-axis
+    /// coordinate *inside the acting region* along the measured axis
+    /// ($\min(a,\, h + |c|)$ when stopped, $h + |c|$ field-wide; $h$ = grid
+    /// half-extent, $c$ = axis coordinate),
+    ///
+    /// $$\Delta\varphi_{\max} = \frac{k\,\delta}{|f(\lambda)|}
+    ///   \Big(r - \frac{\delta}{2}\Big)$$
+    ///
+    /// maximized over the two axes ($\delta$ = pitch along the axis; the
+    /// extreme adjacent pair straddles $r$ minus one half-pitch — an exact
+    /// maximum field-wide, an upper bound for a stopped lens whose rim
+    /// does not land on a sample). The lens profile is resolved when
+    /// $\Delta\varphi_{\max} < \pi$; the value is reported, not enforced
+    /// (elements stay local — regime/sampling judgment is caller-side).
+    /// Returns `f64::INFINITY` when the focal closure is invalid at
+    /// `band`'s wavelength.
+    pub fn worst_phase_step(&self, band: &BandField) -> f64 {
+        let lambda = band.lambda();
+        let f = (self.f)(lambda);
+        if !f.is_finite() || f == 0.0 {
+            return f64::INFINITY;
+        }
+        let (nx, ny) = band.field().dims();
+        let (dx, dy) = band.field().pitch();
+        let (cx, cy) = self.center;
+        let half_x = (nx as f64 - 1.0) / 2.0 * dx;
+        let half_y = (ny as f64 - 1.0) / 2.0 * dy;
+        let (rx, ry) = match self.clear_radius {
+            Some(a) => (a.min(half_x + cx.abs()), a.min(half_y + cy.abs())),
+            None => (half_x + cx.abs(), half_y + cy.abs()),
+        };
+        let k = 2.0 * PI / lambda;
+        let step_x = k * dx * (rx - dx / 2.0).max(0.0) / f.abs();
+        let step_y = k * dy * (ry - dy / 2.0).max(0.0) / f.abs();
+        step_x.max(step_y)
+    }
+}
+
+impl Element for ThinLens {
+    fn shape(&self) -> &ElementShape {
+        &self.shape
+    }
+
+    fn kind(&self) -> ElementKind {
+        ElementKind::Lens
+    }
+
+    fn material(&self) -> (&Material, &Material) {
+        (&self.material, &self.material)
+    }
+
+    /// The lens's own clear-aperture radius for the stopped form (task-c
+    /// revision: extent describes the element, not the grid); `Unbounded`
+    /// for the field-wide special case.
+    fn extent(&self) -> Extent {
+        match self.clear_radius {
+            Some(a) => Extent::Aperture(a),
+            None => Extent::Unbounded,
+        }
+    }
+
+    /// Applies the lens: inside the clear aperture (or the whole plane when
+    /// field-wide) multiplies the quadratic phase; outside a stopped
+    /// aperture the sample is set to zero (hard-edge stop, boundary
+    /// inclusive like the aperture elements).
+    ///
+    /// # Errors
+    /// [`OpticsError::InvalidFocal`] if $f(\lambda)$ is zero or non-finite
+    /// at the band's wavelength; [`OpticsError::OutsideField`] if a stopped
+    /// lens's footprint exceeds the grid.
+    fn apply(&self, band: &BandField) -> Result<BandField, OpticsError> {
+        let lambda = band.lambda();
+        let f = (self.f)(lambda);
+        if !f.is_finite() || f == 0.0 {
+            return Err(OpticsError::InvalidFocal { lambda, f });
+        }
+        let (cx, cy) = self.center;
+        if let Some(a) = self.clear_radius {
+            let (grid_half_x, grid_half_y) = grid_half_extents(band);
+            if cx.abs() + a > grid_half_x || cy.abs() + a > grid_half_y {
+                return Err(OpticsError::OutsideField {
+                    half_x: a,
+                    half_y: a,
+                    center_x: cx,
+                    center_y: cy,
+                    grid_half_x,
+                    grid_half_y,
+                });
+            }
+        }
+        let k = 2.0 * PI / lambda;
+        let mut out = band.clone();
+        let field = out.field_mut();
+        let (nx, ny) = field.dims();
+        let a2 = self.clear_radius.map(|a| a * a);
+        for iy in 0..ny {
+            for ix in 0..nx {
+                let (x, y) = field.coord(ix, iy);
+                let dxc = x - cx;
+                let dyc = y - cy;
+                let rho2 = dxc * dxc + dyc * dyc;
+                let s = field.sample_mut(ix, iy);
+                if let Some(a2) = a2
+                    && rho2 > a2
+                {
+                    *s = Complex64::ZERO;
+                    continue;
+                }
+                let phase = -k * rho2 / (2.0 * f);
+                *s *= (phase * Complex64::I).exp();
+            }
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::field::Field;
+    use crate::propagation::{asm, fresnel};
+    use crate::sources::{self, GaussianBeam};
     use std::f64::consts::PI;
 
     fn lambda() -> f64 {
@@ -755,5 +1014,224 @@ mod tests {
         assert_eq!(field.coord(100, 50), (r50(), 0.0));
         assert_eq!(field.coord(0, 0), (-r50(), -r50()));
         assert_eq!(grid_half_extents(&band_101()), (r50(), r50()));
+    }
+
+    #[test]
+    fn focal_plane_reproduces_fourier_property() {
+        // Gaussian waist w0 at the lens plane, lens f, propagate exactly f:
+        // the focal plane holds the Fourier transform of the input — a
+        // Gaussian waist w0' = lambda * f / (pi * w0), amplitude w0/w0'.
+        let w0 = 0.15e-3;
+        let f = 0.05;
+        let n = 255usize;
+        let d = 5e-6;
+        let band = sources::gaussian(
+            &GaussianBeam {
+                w0,
+                amplitude: 1.0,
+                center: (0.0, 0.0),
+            },
+            0.0,
+            lambda(),
+            n,
+            n,
+            d,
+            d,
+        )
+        .unwrap();
+        let focused = ThinLens::fixed(f, None, (0.0, 0.0))
+            .unwrap()
+            .apply(&band)
+            .unwrap();
+        let w_focus = lambda() * f / (PI * w0);
+        let sigma_exp = w_focus / 2.0f64.sqrt();
+        let asm_out = asm::propagate(&focused, f, &asm::AsmConfig::default()).unwrap();
+        let fr_out =
+            fresnel::propagate_convolution(&focused, f, &fresnel::FresnelConfig::default())
+                .unwrap();
+        for (label, out) in [("asm", &asm_out), ("fresnel-conv", &fr_out)] {
+            let field = out.field();
+            let (mut s0, mut s2) = (0.0f64, 0.0f64);
+            for iy in 0..n {
+                for ix in 0..n {
+                    let (x, _) = field.coord(ix, iy);
+                    let i = field.sample(ix, iy).norm_sqr();
+                    s0 += i;
+                    s2 += i * x * x;
+                }
+            }
+            let sigma = (2.0 * s2 / s0).sqrt();
+            let rel = ((sigma - sigma_exp) / sigma_exp).abs();
+            assert!(rel < 1e-2, "{label}: focal width rel {rel:e}");
+            let amp_exp = w0 / w_focus; // energy-conserving focus amplitude
+            let c = field.sample(n / 2, n / 2);
+            let rel_a = ((c.norm() - amp_exp) / amp_exp).abs();
+            assert!(rel_a < 1e-2, "{label}: focal amplitude rel {rel_a:e}");
+        }
+    }
+
+    #[test]
+    fn phase_profile_is_the_negative_quadratic() {
+        let f = 0.1;
+        let n = 128usize;
+        let d = 1e-5;
+        let band = BandField::uniform(2.0, 0.0, n, n, d, d, lambda()).unwrap();
+        let out = ThinLens::fixed(f, None, (0.0, 0.0))
+            .unwrap()
+            .apply(&band)
+            .unwrap();
+        let k = 2.0 * PI / lambda();
+        for (ix, iy) in [(0usize, 0usize), (63, 64), (127, 127), (10, 120)] {
+            let (x, y) = band.field().coord(ix, iy);
+            let expected = -k * (x * x + y * y) / (2.0 * f);
+            let s = out.field().sample(ix, iy);
+            assert!((s.norm() - 2.0).abs() < 1e-12); // pure phase: |t| = 1
+            let err = (s.arg() - expected + PI).rem_euclid(2.0 * PI) - PI;
+            assert!(err.abs() < 1e-9, "phase at ({ix},{iy}): {err}");
+        }
+    }
+
+    #[test]
+    fn dispersive_closure_evaluates_per_band() {
+        // Refractive-like law (textbook Sec. 4.1.3): f grows with lambda.
+        let l0 = 500e-9;
+        let f0 = 0.1;
+        let lens =
+            ThinLens::new(move |l| f0 * (1.0 + 0.5 * (l - l0) / l0), None, (0.0, 0.0)).unwrap();
+        assert!((lens.focal_at(l0) - f0).abs() < 1e-15);
+        assert!((lens.focal_at(1.2 * l0) - 1.1 * f0).abs() < 1e-12);
+        let n = 64usize;
+        let d = 1e-5;
+        let (ix, iy) = (60usize, 32usize);
+        for (lam, want_f) in [(l0, f0), (1.2 * l0, 1.1 * f0)] {
+            let band = BandField::uniform(1.0, 0.0, n, n, d, d, lam).unwrap();
+            let out = lens.apply(&band).unwrap();
+            let (x, y) = band.field().coord(ix, iy);
+            let expected = -(2.0 * PI / lam) * (x * x + y * y) / (2.0 * want_f);
+            let err = (out.field().sample(ix, iy).arg() - expected + PI).rem_euclid(2.0 * PI) - PI;
+            assert!(err.abs() < 1e-9, "lambda {lam}: phase err {err}");
+        }
+    }
+
+    #[test]
+    fn diverging_lens_conjugates_the_converging_phase() {
+        let band = BandField::uniform(1.0, 0.0, 64, 64, 1e-5, 1e-5, lambda()).unwrap();
+        let conv = ThinLens::fixed(0.1, None, (0.0, 0.0))
+            .unwrap()
+            .apply(&band)
+            .unwrap();
+        let div = ThinLens::fixed(-0.1, None, (0.0, 0.0))
+            .unwrap()
+            .apply(&band)
+            .unwrap();
+        for (c, dd) in conv.field().samples().iter().zip(div.field().samples()) {
+            assert!((c.conj() - dd).norm() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn lens_validation_and_taxonomy() {
+        let band = BandField::uniform(1.0, 0.0, 8, 8, 1e-5, 1e-5, lambda()).unwrap();
+        for bad in [0.0, f64::NAN, f64::INFINITY] {
+            let lens = ThinLens::fixed(bad, None, (0.0, 0.0)).unwrap();
+            assert!(matches!(
+                lens.apply(&band),
+                Err(OpticsError::InvalidFocal { .. })
+            ));
+            assert_eq!(lens.worst_phase_step(&band), f64::INFINITY);
+        }
+        assert!(matches!(
+            ThinLens::new(|_| 0.1, None, (f64::NAN, 0.0)),
+            Err(OpticsError::InvalidAxis { .. })
+        ));
+        for bad_r in [0.0, -1e-3, f64::NAN] {
+            assert!(matches!(
+                ThinLens::new(|_| 0.1, Some(bad_r), (0.0, 0.0)),
+                Err(OpticsError::InvalidAperture { .. })
+            ));
+        }
+        // Field-wide special case.
+        let wide: &dyn Element = &ThinLens::fixed(0.1, None, (0.0, 0.0)).unwrap();
+        assert!(matches!(wide.shape(), ElementShape::Unbounded));
+        assert!(matches!(wide.kind(), ElementKind::Lens));
+        assert!(matches!(wide.extent(), Extent::Unbounded));
+        // Stopped lens: extent describes the lens, not the field.
+        let stopped = ThinLens::fixed(0.1, Some(20e-3), (1e-3, -1e-3)).unwrap();
+        assert_eq!(stopped.clear_radius(), Some(20e-3));
+        assert_eq!(stopped.center(), (1e-3, -1e-3));
+        let el: &dyn Element = &stopped;
+        assert!(matches!(el.shape(), ElementShape::Circle));
+        assert!(matches!(
+            el.extent(),
+            Extent::Aperture(r) if (r - 20e-3).abs() < 1e-18
+        ));
+    }
+
+    #[test]
+    fn stopped_lens_masks_outside_the_clear_aperture() {
+        let band = band_101();
+        let a = 30e-3;
+        let lens = ThinLens::fixed(0.1, Some(a), (0.0, 0.0)).unwrap();
+        let out = lens.apply(&band).unwrap();
+        let f = out.field();
+        let k = 2.0 * PI / lambda();
+        // Boundary-inclusive stop: (x = a, y = 0) passes with the full lens
+        // phase there; just outside is zero. Compare phase *difference* to
+        // the input (band_101 carries a pi/3 constant phase).
+        assert!((f.sample(80, 50).norm() - band.field().sample(80, 50).norm()).abs() < 1e-12);
+        let ratio = f.sample(80, 50) / band.field().sample(80, 50);
+        let err = (ratio.arg() - (-k * a * a / (2.0 * 0.1)) + PI).rem_euclid(2.0 * PI) - PI;
+        assert!(err.abs() < 1e-9);
+        assert_eq!(f.sample(81, 50), Complex64::ZERO); // x = 31 mm > a
+        assert_eq!(f.sample(100, 100), Complex64::ZERO); // corner
+        assert_eq!(f.sample(50, 50), band.field().sample(50, 50)); // axis: phase 0
+        // Uniform input: transmitted power = aperture area / window area.
+        let ratio = f.power() / band.field().power();
+        let expected = PI * a * a / (100.0e-3 * 100.0e-3);
+        let rel = ((ratio - expected) / expected).abs();
+        assert!(rel < 0.03, "lens stop area error {rel}");
+        // Footprint larger than the grid is rejected, not truncated.
+        let big = ThinLens::fixed(0.1, Some(55e-3), (0.0, 0.0)).unwrap();
+        assert!(matches!(
+            big.apply(&band),
+            Err(OpticsError::OutsideField { half_x: 55e-3, .. })
+        ));
+    }
+
+    #[test]
+    fn worst_phase_step_closed_form_matches_sweep() {
+        // Geometry chosen so the true steps stay below pi (no wrap in the
+        // sweep); the extreme adjacent pair sits at the grid end farthest
+        // from the axis: |x'_a + x'_b| = 2(h + |c|) - d.
+        let n = 64usize;
+        let d = 1e-4;
+        let center = (3e-4, -2e-4);
+        let band = BandField::uniform(1.0, 0.0, n, n, d, d, lambda()).unwrap();
+        let lens = ThinLens::fixed(2.0, None, center).unwrap();
+        let out = lens.apply(&band).unwrap();
+        let field = out.field();
+        let mut max_step = 0.0f64;
+        for iy in 0..n {
+            for ix in 1..n {
+                let step = (field.sample(ix, iy) / field.sample(ix - 1, iy))
+                    .arg()
+                    .abs();
+                max_step = max_step.max(step);
+            }
+        }
+        for iy in 1..n {
+            for ix in 0..n {
+                let step = (field.sample(ix, iy) / field.sample(ix, iy - 1))
+                    .arg()
+                    .abs();
+                max_step = max_step.max(step);
+            }
+        }
+        let closed = lens.worst_phase_step(&band);
+        assert!(closed < PI, "geometry must stay unwrapped, got {closed}");
+        assert!(
+            (closed - max_step).abs() < 1e-9,
+            "closed form {closed} vs sweep {max_step}"
+        );
     }
 }

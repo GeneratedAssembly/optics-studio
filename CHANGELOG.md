@@ -40,6 +40,14 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   `Element::extent` for non-circular apertures returns the **conservative**
   larger half-extent $\max(a, b)$ for regime gating; per-axis geometry
   stays on the concrete accessors.
+- **Thin lens carries its clear aperture** (task-c revision, user
+  2026-10-12; **supersedes** the same-day "pure phase, no clear aperture"
+  choice): the primary `ThinLens` form is the quadratic phase inside a
+  circular clear aperture (hard-edge stop, boundary inclusive) so
+  `Element::extent` describes the lens itself and regime gating uses the
+  lens's own half-extent. The field-wide behavior (phase over the whole
+  sampled plane) is kept as the `clear_radius = None` special case;
+  taxonomy retains `ElementShape::Unbounded` / `Extent::Unbounded` for it.
 
 ### Added
 
@@ -84,6 +92,36 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   diagnostics, boundary-inclusive mask geometry, power reduction = area
   ratio ($\pi ab$ and $4ab$ over $WH$, 3%), interior phase-ramp
   preservation, `dyn Element` dispatch incl. conservative extent.
+- `ThinLens` (`src/element.rs`, Phase 3 task c, decision D1): ideal thin
+  lens — quadratic phase screen with **dispersive focal closure**
+  $t = \exp(-i\frac{2\pi}{\lambda}\frac{\rho^2}{2 f(\lambda)})$ inside a
+  circular clear aperture (hard-edge stop, boundary inclusive), optical
+  axis `center` (m); `clear_radius = None` gives the field-wide special
+  case (no stop). Sign: converging $f>0$ = negative quadratic — matches
+  the converging-curvature convention of `sources` ($e^{+ikz}$ frame) and
+  the textbook lens/DOE-lens construction (Sec. 4.2.1, Eq. 4.13 zone radii
+  $r_p^2 = 2fp\lambda$); chromatic law lives in the closure (Sec. 4.1.3:
+  refractive $f$ shortens at blue; DOE-like $f \propto \lambda$ keeps the
+  phase fixed). Constructors `new(closure, clear_radius, center)` +
+  `fixed(f0, clear_radius, center)` sugar; `focal_at(lambda)`,
+  `clear_radius() -> Option<f64>`; `worst_phase_step(band)` closed-form
+  $O(1)$ sampling diagnostic (upper bound for the stopped form, exact
+  field-wide; reported, not enforced — elements stay local).
+  `kind = Lens`; stopped lens reports `shape = Circle` /
+  `extent = Aperture(a)`, field-wide reports `Unbounded`/`Unbounded`;
+  new errors `OpticsError::InvalidFocal { lambda, f }` (zero or non-finite
+  closure result at `apply`) and `InvalidAxis { .. }`; `InvalidAperture` /
+  `OutsideField` reused for the clear aperture.
+- Thin-lens unit tests (8): Fourier property — Gaussian waist at the lens
+  plane, propagate exactly $f$ (ASM + Fresnel convolution), focal width
+  $\lambda f/(\pi w_0)$ and amplitude $w_0/w_0'$ to 1%; pure-phase profile
+  $|t|=1$ with $-k\rho^2/2f$ wrapped-exact at sampled points; dispersive
+  closure evaluated per band ($f$ linear in $\lambda$); diverging lens =
+  conjugate phase; `InvalidFocal`/`InvalidAxis`/`InvalidAperture` +
+  taxonomy for both forms; `worst_phase_step` closed form = finite-
+  difference sweep maximum (field-wide); stopped lens masks outside the
+  aperture (boundary inclusive, power = aperture area ratio, oversized
+  footprint rejected).
 
 ### Changed
 
