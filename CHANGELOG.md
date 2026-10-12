@@ -40,6 +40,23 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   `Element::extent` for non-circular apertures returns the **conservative**
   larger half-extent $\max(a, b)$ for regime gating; per-axis geometry
   stays on the concrete accessors.
+
+### Decisions (Phase-3 task-d review, 2026-10-12, user)
+
+- **`ClearAperture` enum for phase-element stops** ("we can't square a
+  circle"): `Field | Circle(r) | Ellipse{a,b} | Rectangle{half_x,half_y}`
+  shared by `ThinLens` and `PhaseMask`, replacing the `Option<f64>`
+  circular-only stop (rectangular DOE windows are the motivating case).
+  Hard-edge, boundary-inclusive predicates identical to the aperture
+  elements; `shape()` maps to the taxonomy, `extent_radius()` gives the
+  conservative larger half-side for regime gating, `footprint()` drives
+  `OutsideField`. A predicate-closure stop (arbitrary polygons) is
+  **deferred for later discussion**.
+- **`PhaseMask` API**: closure takes **center-relative** coordinates so DOE
+  designs are translation-invariant; `kind = Diffractive`;
+  `InvalidPhase { x, y, phase }` reports the first non-finite closure value
+  with position; no sampling guard for arbitrary profiles (caller-side
+  Nyquist duty; structured elements self-validate analytically).
 - **Thin lens carries its clear aperture** (task-c revision, user
   2026-10-12; **supersedes** the same-day "pure phase, no clear aperture"
   choice): the primary `ThinLens` form is the quadratic phase inside a
@@ -122,6 +139,33 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   difference sweep maximum (field-wide); stopped lens masks outside the
   aperture (boundary inclusive, power = aperture area ratio, oversized
   footprint rejected).
+- `PhaseMask` (`src/element.rs`, Phase 3 task d, decision D2): the DOE
+  interface — analytic closure $(x, y) \mapsto \varphi$ (center-relative
+  meters in, radians out, so designs are translation-invariant) painted as
+  $t = e^{i\varphi}$ with a [`ClearAperture`] stop following the task-c
+  lens precedent (boundary-inclusive hard edge; `Field` acts over the
+  whole sampled plane and reports `Unbounded` shape/extent).
+  `kind = Diffractive`; `phase_at` closure probe; new
+  `OpticsError::InvalidPhase { x, y, phase }` reports the first non-finite
+  closure value with its center-relative position. No sampling guard: an
+  arbitrary profile admits no closed-form step bound and $O(N^2)$
+  warning-sweeps are against project guidelines — caller-side Nyquist duty
+  documented; structured elements self-validate analytically (grating in
+  task e). Sampled-profile variant deferred to Phase 5 per D2.
+- Phase-mask unit tests (6): identity mask is bit-exact; linear ramp
+  reproduces `BandField::plane_wave` tilt (blaze profile, Eq. 3.5
+  direction cosines); **DOE-lens closure equals `ThinLens` sample-exactly**
+  (textbook Sec. 4.2.1 construction); spiral/vortex $\ell\,\theta$ mask is
+  unit-modulus with wrapped phase $\ell\,\mathrm{atan2}$ everywhere;
+  non-finite closure rejected with position (row-major first offender);
+  taxonomy, constructor validation, oversized-footprint rejection,
+  `phase_at` probe.
+- `ClearAperture` (`src/element.rs`, task-d review): shared stop geometry
+  for phase elements (see Decisions). Unit tests (2 added): helper
+  predicates/extent/shape/validation per variant; rectangular-stop mask
+  window (inclusive corners, one-past-edge zeros, area-ratio power,
+  asymmetric `OutsideField` diagnostics, rectangle taxonomy with
+  conservative extent).
 
 ### Changed
 

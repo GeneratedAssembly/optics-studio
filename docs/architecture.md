@@ -36,7 +36,7 @@ Phase 5 decision point.
 | `common` | Angle newtype (radians, derefs to f64), `J` imaginary unit | `Angle`, `J` |
 | `wave` | Scalar source/beam parameter records (pre-sampling) | `Wavelength`, `Polarization`, `Wave` |
 | `field` | Complex sample grids; wavelength decoupled from geometry | `Field`, `BandField`, `FieldError` |
-| `element` | Local field transformations; element taxonomy | `Element` trait, `EllipticalAperture`, `RectangularAperture`, `ThinLens`, `OpticsError`, `ElementShape`, `ElementKind`, `Extent`, `Material` |
+| `element` | Local field transformations; element taxonomy | `Element` trait, `EllipticalAperture`, `RectangularAperture`, `ThinLens`, `PhaseMask`, `ClearAperture`, `OpticsError`, `ElementShape`, `ElementKind`, `Extent`, `Material` |
 | `sources` | Closed-form field initializers → `BandField` | `GaussianBeam`, `gaussian`, `SourcesError` |
 | `propagation` | Wave-optics engines + regime diagnostics | `asm`, `fresnel`, `fraunhofer`, `regime` (public); `fft` (private) |
 
