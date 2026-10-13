@@ -22,7 +22,7 @@
 //! let mut bl = Beamline::new();
 //! bl.push(&stop, 0.0) // no spacing: element back-to-back
 //!     .push(&lens, 0.2); // propagate 0.2 m after the lens
-//! let focused = bl.trace(&band, |b, z| propagate(b, z, &cfg))?;
+//! let focused = bl.trace(&band, |b, z, _n| propagate(b, z, &cfg))?;
 //! # Ok(())
 //! # }
 //! ```
@@ -42,13 +42,13 @@ use thiserror::Error;
 use crate::element::{Element, OpticsError};
 use crate::field::BandField;
 
-/// An ordered sequence of `(element, z_after)` steps over borrowed
+/// An ordered sequence of `(element, z_after, medium)` steps over borrowed
 /// elements. The beamline is a transient composition: elements stay
 /// caller-owned (`&'a dyn Element`), and building or pushing never copies
 /// them.
 #[derive(Clone, Default)]
 pub struct Beamline<'a> {
-    steps: Vec<(&'a dyn Element, f64)>,
+    steps: Vec<(Option<&'a dyn Element>, f64, f64)>,
 }
 
 impl<'a> Beamline<'a> {
@@ -57,10 +57,31 @@ impl<'a> Beamline<'a> {
         Self::default()
     }
 
-    /// Appends `element` followed by a free-space distance `z_after`
+    /// Appends `element` followed by a vacuum distance `z_after`
     /// (meters; `0.0` means no spacing). Returns `self` for chaining.
     pub fn push(&mut self, element: &'a dyn Element, z_after: f64) -> &mut Self {
-        self.steps.push((element, z_after));
+        self.push_medium(element, z_after, 1.0)
+    }
+
+    /// Appends `element` followed by a distance `z_after` (meters) through
+    /// a medium of refractive index `medium` (finite, > 0 — validated by
+    /// the engine, not here). The medium reaches the propagation closure
+    /// as its third argument (e.g. `AsmConfig::medium`).
+    pub fn push_medium(
+        &mut self,
+        element: &'a dyn Element,
+        z_after: f64,
+        medium: f64,
+    ) -> &mut Self {
+        self.steps.push((Some(element), z_after, medium));
+        self
+    }
+
+    /// Appends a pure propagation step: distance `z` (meters, `0.0`
+    /// skipped) through medium `medium`, with no element. Composes slabs
+    /// and thick-lens internals (surface → gap → surface).
+    pub fn gap(&mut self, z: f64, medium: f64) -> &mut Self {
+        self.steps.push((None, z, medium));
         self
     }
 
@@ -75,8 +96,9 @@ impl<'a> Beamline<'a> {
     }
 
     /// Applies each element in order, propagating `z_after` through the
-    /// caller-supplied engine between planes. `propagate` is only called
-    /// for nonzero spacings, in step order.
+    /// caller-supplied engine between planes with the step's medium.
+    /// `propagate(band, z, medium)` is only called for nonzero spacings,
+    /// in step order.
     ///
     /// # Errors
     /// [`BeamlineError::Element`] for the first failing `apply`
@@ -85,16 +107,18 @@ impl<'a> Beamline<'a> {
     pub fn trace<E>(
         &self,
         band: &BandField,
-        mut propagate: impl FnMut(&BandField, f64) -> Result<BandField, E>,
+        mut propagate: impl FnMut(&BandField, f64, f64) -> Result<BandField, E>,
     ) -> Result<BandField, BeamlineError<E>>
     where
         E: std::error::Error,
     {
         let mut current = band.clone();
-        for (element, z) in &self.steps {
-            current = element.apply(&current)?;
+        for (element, z, medium) in &self.steps {
+            if let Some(element) = element {
+                current = element.apply(&current)?;
+            }
             if *z != 0.0 {
-                current = propagate(&current, *z).map_err(BeamlineError::Engine)?;
+                current = propagate(&current, *z, *medium).map_err(BeamlineError::Engine)?;
             }
         }
         Ok(current)
@@ -108,7 +132,7 @@ impl<'a> Beamline<'a> {
     pub fn psf<E>(
         &self,
         band: &BandField,
-        propagate: impl FnMut(&BandField, f64) -> Result<BandField, E>,
+        propagate: impl FnMut(&BandField, f64, f64) -> Result<BandField, E>,
     ) -> Result<Psf, BeamlineError<E>>
     where
         E: std::error::Error,
@@ -228,7 +252,9 @@ mod tests {
     use crate::element::{ClearAperture, EllipticalAperture, RectangularAperture, ThinLens};
     use crate::propagation::asm::{AsmConfig, propagate as asm_propagate};
     use crate::sources::{GaussianBeam, gaussian};
+    use num_complex::Complex64;
     use std::cell::Cell;
+    use std::f64::consts::PI;
 
     const LAMBDA: f64 = 500e-9;
 
@@ -249,7 +275,9 @@ mod tests {
 
         let mut bl = Beamline::new();
         bl.push(&stop, 0.1).push(&lens, 0.2).push(&rect, 0.0);
-        let traced = bl.trace(&band(), |b, z| asm_propagate(b, z, &cfg)).unwrap();
+        let traced = bl
+            .trace(&band(), |b, z, _n| asm_propagate(b, z, &cfg))
+            .unwrap();
 
         // Hand-rolled chain in the same order.
         let mut manual = band();
@@ -276,7 +304,7 @@ mod tests {
         let mut bl = Beamline::new();
         bl.push(&stop, 0.0).push(&stop, 0.05);
         let out = bl
-            .trace(&band(), |b, _z| {
+            .trace(&band(), |b, _z, _n| {
                 calls.set(calls.get() + 1);
                 asm_propagate(b, 0.05, &AsmConfig::default())
             })
@@ -294,7 +322,9 @@ mod tests {
         let mut bl = Beamline::new();
         bl.push(&big, 0.0);
         let err = bl
-            .trace(&band(), |b, z| asm_propagate(b, z, &AsmConfig::default()))
+            .trace(&band(), |b, z, _n| {
+                asm_propagate(b, z, &AsmConfig::default())
+            })
             .unwrap_err();
         assert!(matches!(
             err,
@@ -308,7 +338,7 @@ mod tests {
         let mut bl = Beamline::new();
         bl.push(&stop, 0.1);
         let err = bl
-            .trace(&band(), |_b, _z| Err::<BandField, Boom>(Boom))
+            .trace(&band(), |_b, _z, _n| Err::<BandField, Boom>(Boom))
             .unwrap_err();
         assert!(matches!(err, BeamlineError::Engine(Boom)));
     }
@@ -318,7 +348,7 @@ mod tests {
         let bl = Beamline::new();
         assert!(bl.is_empty());
         let out = bl
-            .trace(&band(), |_b, _z| Err::<BandField, Boom>(Boom))
+            .trace(&band(), |_b, _z, _n| Err::<BandField, Boom>(Boom))
             .unwrap();
         assert_eq!(out, band());
     }
@@ -337,8 +367,10 @@ mod tests {
         let mut bl = Beamline::new();
         bl.push(&stop, 0.1);
         let cfg = AsmConfig::default();
-        let psf = bl.psf(&src, |b, z| asm_propagate(b, z, &cfg)).unwrap();
-        let traced = bl.trace(&src, |b, z| asm_propagate(b, z, &cfg)).unwrap();
+        let psf = bl.psf(&src, |b, z, _n| asm_propagate(b, z, &cfg)).unwrap();
+        let traced = bl
+            .trace(&src, |b, z, _n| asm_propagate(b, z, &cfg))
+            .unwrap();
         // I = |u|^2 sample-for-sample, geometry preserved.
         assert_eq!(psf.dims(), band().field().dims());
         assert_eq!(psf.pitch(), band().field().pitch());
@@ -366,5 +398,64 @@ mod tests {
             dy: 1.0,
         };
         assert_eq!(empty.centroid(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn medium_reaches_the_engine_closure_per_step() {
+        // Slab composition anchor (Phase 6): a gap step carries its medium
+        // to the closure, push() stays vacuum (1.0), and push_medium
+        // carries its index. Uniform band = on-axis plane wave, unpadded:
+        // each gap multiplies exactly by e^{i n k z}, so the product is
+        // e^{i k (n1 z1 + n2 z2)}; the aperture step has zero distance and
+        // transmits the probe sample (r = 95 um < 120 um), leaving the
+        // ratio pure piston.
+        let n = 16usize;
+        let d = 20e-6;
+        let band = BandField::uniform(1.0, 0.0, n, n, d, d, LAMBDA).unwrap();
+        let mut seen: Vec<(f64, f64)> = Vec::new();
+        let stop = EllipticalAperture::circle(120e-6, (0.0, 0.0)).unwrap();
+        let mut bl = Beamline::new();
+        bl.gap(1e-3, 1.5)
+            .gap(0.5e-3, 1.0)
+            .push_medium(&stop, 0.0, 1.5);
+        let out = bl
+            .trace(&band, |b, z, m| {
+                seen.push((z, m));
+                asm_propagate(
+                    b,
+                    z,
+                    &AsmConfig {
+                        padding: 1.0,
+                        medium: m,
+                        ..AsmConfig::default()
+                    },
+                )
+            })
+            .unwrap();
+        assert_eq!(seen, vec![(1e-3, 1.5), (0.5e-3, 1.0)], "zero gaps skipped");
+        let k = 2.0 * PI / LAMBDA;
+        let expected = ((1.5 * 1e-3 + 1.0 * 0.5e-3) * k * Complex64::I).exp();
+        let ratio = out.field().sample(3, 9) / band.field().sample(3, 9);
+        assert!(
+            (ratio - expected).norm() < 1e-9,
+            "slab piston {ratio} vs {expected}"
+        );
+    }
+
+    #[test]
+    fn gap_only_beamline_and_len() {
+        let mut bl = Beamline::new();
+        assert!(bl.is_empty());
+        bl.gap(0.0, 2.0); // zero distance: traced without engine call
+        assert_eq!(bl.len(), 1);
+        let calls = Cell::new(0usize);
+        let out = bl
+            .trace(&band(), |_b, _z, _n| {
+                calls.set(calls.get() + 1);
+                Ok::<BandField, Boom>(band())
+            })
+            .unwrap();
+        assert_eq!(calls.get(), 0);
+        assert_eq!(out, band());
     }
 }

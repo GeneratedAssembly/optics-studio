@@ -35,7 +35,7 @@ fn psf_of_circular_aperture_is_airy() {
     let mut bl = Beamline::new();
     bl.push(&stop, z);
     let psf = bl
-        .psf(&band, |b, zz| fraunhofer_propagate(b, zz, &fcfg))
+        .psf(&band, |b, zz, _n| fraunhofer_propagate(b, zz, &fcfg))
         .unwrap();
 
     let (onx, ony) = psf.dims();
@@ -101,7 +101,7 @@ fn psf_peak_follows_field_angle() {
     let cfg = AsmConfig::default();
     let mut bl = Beamline::new();
     bl.push(&stop, 0.0).push(&lens, f);
-    let psf = bl.psf(&band, |b, z| asm_propagate(b, z, &cfg)).unwrap();
+    let psf = bl.psf(&band, |b, z, _n| asm_propagate(b, z, &cfg)).unwrap();
 
     let (cx, cy) = psf.centroid();
     let expect = f * theta.tan(); // 0.5 mm
@@ -112,7 +112,9 @@ fn psf_peak_follows_field_angle() {
     assert!(cy.abs() < 1e-6, "focal centroid y {cy:e}");
     // On-axis reference: same system, untilted wave -> centroid at origin.
     let band0 = BandField::plane_wave(0.0, 0.0, 1.0, n, n, d, d, LAMBDA).unwrap();
-    let psf0 = bl.psf(&band0, |b, z| asm_propagate(b, z, &cfg)).unwrap();
+    let psf0 = bl
+        .psf(&band0, |b, z, _n| asm_propagate(b, z, &cfg))
+        .unwrap();
     let (c0x, c0y) = psf0.centroid();
     assert!(c0x.abs() < 1e-6 && c0y.abs() < 1e-6, "on-axis {c0x},{c0y}");
 }
@@ -137,7 +139,7 @@ fn point_source_focuses_at_geometric_image() {
     let cfg = AsmConfig::default();
     let mut bl = Beamline::new();
     bl.push(&lens, d_i);
-    let psf = bl.psf(&src, |b, z| asm_propagate(b, z, &cfg)).unwrap();
+    let psf = bl.psf(&src, |b, z, _n| asm_propagate(b, z, &cfg)).unwrap();
 
     let (cx, cy) = psf.centroid();
     let expect = -x_s * d_i / d_o; // -0.25 mm

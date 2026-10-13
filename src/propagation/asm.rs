@@ -48,6 +48,23 @@
 //! `padding` up to `max_padding`; only if the cap cannot satisfy the criterion
 //! does [`propagate`] fail with [`PropagationError::AliasingRisk`].
 //!
+//! # Refractive media (`AsmConfig::medium`, Phase 6)
+//!
+//! In a medium of index $n$ the wavenumber is $nk = 2\pi n/\lambda$ and the
+//! direction cosine of bin $f$ is $\lambda f / n$, so the transfer function
+//! becomes
+//!
+//! $$H_n(f_x, f_y) = \exp\!\Big(i\,n k z\,\sqrt{1 - (\lambda f_x/n)^2 - (\lambda f_y/n)^2}\Big),
+//!   \qquad \lambda_n \equiv \frac{\lambda}{n},$$
+//!
+//! — exactly the vacuum machinery with $\lambda \to \lambda_n$: the evanescent
+//! cutoff rises to $n/\lambda$, the Matsushima band-limit scales by $n$, and
+//! the sampling guard tracks the steeper transfer phase. This is what lets a
+//! `Beamline` step carry a medium and compose thick lenses as
+//! surface → medium gap → surface (textbook Eq. 4.1). A plane wave at normal
+//! incidence through thickness $t$ picks up $e^{\,i n k t}$ — optical path
+//! $n t$, the slab piston anchor.
+//!
 //! # Validity regime
 //!
 //! Paraxial and non-paraxial propagation is exact for the scalar Helmholtz
@@ -97,17 +114,24 @@ pub struct AsmConfig {
     /// Upper bound on automatic densification in `strict` mode
     /// (`padding` never exceeds this). `1.0` disables mitigation.
     pub max_padding: f64,
+    /// Refractive index $n$ of the propagation medium (Phase 6). Must be
+    /// finite and $> 0$; `1.0` (default) is vacuum. The band-limit,
+    /// evanescent circle, and sampling guard all scale via
+    /// $\lambda_n = \lambda / n$ (module docs).
+    pub medium: f64,
 }
 
 impl Default for AsmConfig {
     /// Phase-1 defaults: `padding = 2.0`, `band_limited = true`,
-    /// `strict = true`, `max_padding = 8.0`.
+    /// `strict = true`, `max_padding = 8.0`; Phase 6 adds `medium = 1.0`
+    /// (vacuum).
     fn default() -> Self {
         Self {
             padding: 2.0,
             band_limited: true,
             strict: true,
             max_padding: 8.0,
+            medium: 1.0,
         }
     }
 }
@@ -121,6 +145,9 @@ impl Default for AsmConfig {
 pub struct SamplingReport {
     /// Operating wavelength (m).
     pub lambda: f64,
+    /// Refractive index of the propagation medium (module docs; 1.0 =
+    /// vacuum).
+    pub medium: f64,
     /// Signed propagation distance (m).
     pub z: f64,
     /// Input grid sample counts `(nx, ny)`.
@@ -155,10 +182,11 @@ impl fmt::Display for SamplingReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "ASM sampling: lambda={:.3e} m, z={:.3e} m, grid={}x{} pitch={:.3e}x{:.3e} m, \
+            "ASM sampling: lambda={:.3e} m, medium={:.4}, z={:.3e} m, grid={}x{} pitch={:.3e}x{:.3e} m, \
              padding req={:.2} used={:.2}, padded={}x{}, band limit fx={:.3e} fy={:.3e} cyc/m, \
              max phase step x={:.3} y={:.3} rad, nyquist_ok={}",
             self.lambda,
+            self.medium,
             self.z,
             self.input_dims.0,
             self.input_dims.1,
@@ -198,6 +226,10 @@ pub enum PropagationError {
     /// path.
     #[error("wavelength must be positive and finite (got {0} m)")]
     InvalidWavelength(f64),
+    /// The propagation medium index was not finite and positive
+    /// ([`AsmConfig::medium`]).
+    #[error("propagation medium index must be finite and positive (got {0})")]
+    InvalidMedium(f64),
     /// The field grid had zero samples.
     #[error("field grid is empty")]
     EmptyGrid,
@@ -223,11 +255,12 @@ pub enum PropagationError {
 /// $f_{\lim} = 1 / (\lambda \sqrt{(2 z / L)^2 + 1})$ with $L$ the **padded**
 /// axis width; otherwise the evanescent cutoff $1/\lambda$ (the circle
 /// $(\lambda f_x)^2 + (\lambda f_y)^2 \le 1$ is still applied in both cases).
-fn axis_band_limit(lambda: f64, z: f64, grid_width: f64, band_limited: bool) -> f64 {
+fn axis_band_limit(lambda: f64, z: f64, grid_width: f64, band_limited: bool, medium: f64) -> f64 {
+    let lam_n = lambda / medium;
     if band_limited {
-        1.0 / (lambda * ((2.0 * z / grid_width).powi(2) + 1.0).sqrt())
+        1.0 / (lam_n * ((2.0 * z / grid_width).powi(2) + 1.0).sqrt())
     } else {
-        1.0 / lambda
+        1.0 / lam_n
     }
 }
 
@@ -235,19 +268,22 @@ fn axis_band_limit(lambda: f64, z: f64, grid_width: f64, band_limited: bool) -> 
 // padding policy.
 
 /// Transfer function value at frequency `(fx, fy)` for wavelength `lambda`,
-/// distance `z`; returns `None` for masked (zero) components.
-fn transfer_value(fx: f64, fy: f64, lambda: f64, z: f64) -> Option<Complex64> {
-    let s = 1.0 - (lambda * fx).powi(2) - (lambda * fy).powi(2);
+/// distance `z`, medium index `medium` (module docs; `lambda_n = lambda/n`
+/// substitution); returns `None` for masked (zero) components.
+fn transfer_value(fx: f64, fy: f64, lambda: f64, z: f64, medium: f64) -> Option<Complex64> {
+    let lam_n = lambda / medium;
+    let s = 1.0 - (lam_n * fx).powi(2) - (lam_n * fy).powi(2);
     if s < 0.0 {
         return None; // evanescent
     }
-    let k = 2.0 * PI / lambda;
+    let k = 2.0 * PI / lam_n;
     Some((k * z * s.sqrt() * Complex64::I).exp())
 }
 
 /// Internal evaluation context for one ASM step at a concrete padding factor.
 struct AsmPlan {
     lambda: f64,
+    medium: f64,
     z: f64,
     nx_pad: usize,
     ny_pad: usize,
@@ -271,6 +307,7 @@ struct AsmPlan {
 fn worst_phase_steps(plan: &AsmPlan) -> (f64, f64) {
     let AsmPlan {
         lambda,
+        medium,
         z,
         nx_pad,
         ny_pad,
@@ -280,13 +317,14 @@ fn worst_phase_steps(plan: &AsmPlan) -> (f64, f64) {
         lim_y,
         band_limited,
     } = *plan;
-    let kz = (2.0 * PI / lambda) * z.abs();
+    let lam_n = lambda / medium;
+    let kz = (2.0 * PI / lam_n) * z.abs();
 
     // Largest phase step between adjacent bins along x at fixed fy.
     let step_along_x = |fy: f64| -> f64 {
         let df = 1.0 / (nx_pad as f64 * dx);
         let nyq = ((nx_pad / 2) as f64) * df; // largest |bin| magnitude
-        let f_circle = ((1.0 / lambda).powi(2) - fy.powi(2)).max(0.0).sqrt();
+        let f_circle = ((1.0 / lam_n).powi(2) - fy.powi(2)).max(0.0).sqrt();
         let mut f_edge = f_circle.min(nyq);
         if band_limited {
             if fy.abs() > lim_y {
@@ -296,7 +334,7 @@ fn worst_phase_steps(plan: &AsmPlan) -> (f64, f64) {
         }
         let hi = (f_edge / df).floor().max(0.0) * df;
         let lo = (hi - df).max(0.0);
-        let root = |f: f64| (1.0 - lambda * lambda * (f * f + fy * fy)).max(0.0).sqrt();
+        let root = |f: f64| (1.0 - lam_n * lam_n * (f * f + fy * fy)).max(0.0).sqrt();
         kz * (root(hi) - root(lo)).abs()
     };
 
@@ -304,7 +342,7 @@ fn worst_phase_steps(plan: &AsmPlan) -> (f64, f64) {
     let step_along_y = |fx: f64| -> f64 {
         let df = 1.0 / (ny_pad as f64 * dy);
         let nyq = ((ny_pad / 2) as f64) * df;
-        let f_circle = ((1.0 / lambda).powi(2) - fx.powi(2)).max(0.0).sqrt();
+        let f_circle = ((1.0 / lam_n).powi(2) - fx.powi(2)).max(0.0).sqrt();
         let mut f_edge = f_circle.min(nyq);
         if band_limited {
             if fx.abs() > lim_x {
@@ -314,7 +352,7 @@ fn worst_phase_steps(plan: &AsmPlan) -> (f64, f64) {
         }
         let hi = (f_edge / df).floor().max(0.0) * df;
         let lo = (hi - df).max(0.0);
-        let root = |f: f64| (1.0 - lambda * lambda * (f * f + fx * fx)).max(0.0).sqrt();
+        let root = |f: f64| (1.0 - lam_n * lam_n * (f * f + fx * fx)).max(0.0).sqrt();
         kz * (root(hi) - root(lo)).abs()
     };
 
@@ -340,10 +378,11 @@ fn analyze(band: &BandField, z: f64, cfg: &AsmConfig, padding: f64) -> SamplingR
     let nx_pad = padded_len(nx, padding);
     let ny_pad = padded_len(ny, padding);
 
-    let lim_x = axis_band_limit(lambda, z, nx_pad as f64 * dx, cfg.band_limited);
-    let lim_y = axis_band_limit(lambda, z, ny_pad as f64 * dy, cfg.band_limited);
+    let lim_x = axis_band_limit(lambda, z, nx_pad as f64 * dx, cfg.band_limited, cfg.medium);
+    let lim_y = axis_band_limit(lambda, z, ny_pad as f64 * dy, cfg.band_limited, cfg.medium);
     let plan = AsmPlan {
         lambda,
+        medium: cfg.medium,
         z,
         nx_pad,
         ny_pad,
@@ -357,6 +396,7 @@ fn analyze(band: &BandField, z: f64, cfg: &AsmConfig, padding: f64) -> SamplingR
 
     SamplingReport {
         lambda,
+        medium: cfg.medium,
         z,
         input_dims: (nx, ny),
         pitch: (dx, dy),
@@ -402,6 +442,9 @@ pub fn propagate(band: &BandField, z: f64, cfg: &AsmConfig) -> Result<BandField,
     let lambda = band.lambda();
     if !lambda.is_finite() || lambda <= 0.0 {
         return Err(PropagationError::InvalidWavelength(lambda));
+    }
+    if !cfg.medium.is_finite() || cfg.medium <= 0.0 {
+        return Err(PropagationError::InvalidMedium(cfg.medium));
     }
     let field = band.field();
     let (nx, ny) = field.dims();
@@ -470,7 +513,7 @@ pub fn propagate(band: &BandField, z: f64, cfg: &AsmConfig) -> Result<BandField,
             *h = if masked {
                 Complex64::ZERO
             } else {
-                match transfer_value(fx, fy, lambda, z) {
+                match transfer_value(fx, fy, lambda, z, cfg.medium) {
                     Some(t) => *h * t,
                     None => Complex64::ZERO,
                 }
@@ -523,12 +566,12 @@ mod tests {
     fn band_limit_uses_padded_width_and_shrinks_with_z() {
         let lambda = 500e-9;
         let l_padded = 200.0 * 10e-6; // 2 mm
-        let f0 = axis_band_limit(lambda, 0.0, l_padded, true);
+        let f0 = axis_band_limit(lambda, 0.0, l_padded, true, 1.0);
         assert!((f0 - 1.0 / lambda).abs() < 1e-6);
-        let f1 = axis_band_limit(lambda, 0.05, l_padded, true);
+        let f1 = axis_band_limit(lambda, 0.05, l_padded, true, 1.0);
         assert!(f1 < f0);
         // Non-band-limited reports the evanescent cutoff.
-        assert!((axis_band_limit(lambda, 1.0, l_padded, false) - 1.0 / lambda).abs() < 1e-9);
+        assert!((axis_band_limit(lambda, 1.0, l_padded, false, 1.0) - 1.0 / lambda).abs() < 1e-9);
     }
 
     #[test]
@@ -604,6 +647,7 @@ mod tests {
             band_limited: false,
             strict: true,
             max_padding: 1.0,
+            medium: 1.0,
         };
         let report = sampling_report(&band, z, &cfg);
         assert!(!report.nyquist_ok);
@@ -621,6 +665,112 @@ mod tests {
     }
 
     #[test]
+    fn medium_defaults_to_vacuum_and_validates() {
+        let cfg = AsmConfig::default();
+        assert_eq!(cfg.medium, 1.0);
+        let band = band_uniform(1.0, 8, 8, 20e-6, 20e-6);
+        for n in [0.0, -1.5, f64::NAN, f64::INFINITY] {
+            let bad = AsmConfig {
+                medium: n,
+                ..AsmConfig::default()
+            };
+            assert!(matches!(
+                propagate(&band, 1e-3, &bad),
+                Err(PropagationError::InvalidMedium(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn medium_plane_wave_picks_up_nkz() {
+        // Slab piston anchor: on-axis plane wave through thickness t of
+        // medium n gains e^{i n k t} (optical path n t). Unpadded periodic
+        // grid keeps it exact.
+        let (lambda, t, n) = (500e-9, 1e-3, 1.5);
+        let band = band_uniform(1.0, 16, 16, 20e-6, 20e-6);
+        let cfg = AsmConfig {
+            padding: 1.0,
+            medium: n,
+            ..AsmConfig::default()
+        };
+        let out = propagate(&band, t, &cfg).unwrap();
+        let k = 2.0 * PI / lambda;
+        let expected = (n * k * t * Complex64::I).exp();
+        let s = out.field().sample(3, 9);
+        assert!(
+            (s - expected).norm() < 1e-9,
+            "slab piston: {s} vs {expected}"
+        );
+        // Vacuum (medium = 1) at the same t gains e^{ikt} — the n-1 piston
+        // difference is the OPD (n-1) t.
+        let vac = propagate(
+            &band,
+            t,
+            &AsmConfig {
+                padding: 1.0,
+                ..AsmConfig::default()
+            },
+        )
+        .unwrap();
+        let ratio = out.field().sample(3, 9) / vac.field().sample(3, 9);
+        assert!((ratio - ((n - 1.0) * k * t * Complex64::I).exp()).norm() < 1e-9);
+    }
+
+    #[test]
+    fn medium_scales_band_limit_and_guard() {
+        // Cutoffs rise with n (lambda_n = lambda/n); the transfer phase
+        // steps scale accordingly.
+        let band = band_uniform(1.0, 32, 32, 1e-6, 1e-6);
+        let z = 0.5;
+        let base = AsmConfig {
+            padding: 2.0,
+            band_limited: false,
+            strict: false,
+            max_padding: 8.0,
+            medium: 1.0,
+        };
+        let dense = AsmConfig {
+            medium: 1.5,
+            ..base
+        };
+        let r1 = sampling_report(&band, z, &base);
+        let r2 = sampling_report(&band, z, &dense);
+        // Evanescent cutoff rises EXACTLY with n (lambda_n = lambda/n).
+        assert!((r2.band_limit_fx - 1.5 * r1.band_limit_fx).abs() < 1e-9);
+        // But the transfer function gets SMOOTHER in frequency: the
+        // quadratic chirp coefficient scales as lambda_n^2 * n = lambda^2/n,
+        // so the guard step drops by ~1/n (here (lambda f)^2 ~ 0.06 makes it
+        // 0.65, between 1/1.5 and 1).
+        assert!(r2.max_phase_step_x < r1.max_phase_step_x);
+        let ratio = r2.max_phase_step_x / r1.max_phase_step_x;
+        assert!(
+            (0.55..1.0).contains(&ratio),
+            "step ratio {ratio} outside expected (1/n, 1)"
+        );
+        assert_eq!(r2.medium, 1.5);
+    }
+
+    #[test]
+    fn medium_round_trip_inverts() {
+        let band = band_uniform(1.0, 16, 16, 20e-6, 20e-6);
+        let cfg = AsmConfig {
+            padding: 1.0,
+            medium: 2.0,
+            ..AsmConfig::default()
+        };
+        let fwd = propagate(&band, 1e-3, &cfg).unwrap();
+        let rt = propagate(&fwd, -1e-3, &cfg).unwrap();
+        let err = rt
+            .field()
+            .samples()
+            .iter()
+            .zip(band.field().samples())
+            .map(|(a, b)| (a - b).norm())
+            .fold(0.0_f64, f64::max);
+        assert!(err < 1e-9);
+    }
+
+    #[test]
     fn strict_mode_mitigates_by_densifying_padded_grid() {
         // Same undersampled regime, but far enough below the cap that doubling
         // padding (1 -> 2 -> 4 -> 8) restores transfer-function Nyquist:
@@ -632,6 +782,7 @@ mod tests {
             band_limited: false,
             strict: true,
             max_padding: 8.0,
+            medium: 1.0,
         };
         assert!(!sampling_report(&band, z, &cfg).nyquist_ok);
         let out = propagate(&band, z, &cfg).expect("mitigated by densification");

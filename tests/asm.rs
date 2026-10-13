@@ -111,6 +111,7 @@ fn plane_wave_invariance() {
         band_limited: true,
         strict: false,
         max_padding: 1.0,
+        medium: 1.0,
     };
     let z = 0.01;
     let band = BandField::uniform(1.0, 0.0, 128, 128, 10e-6, 10e-6, LAMBDA).unwrap();
@@ -151,6 +152,7 @@ fn tilted_plane_wave_ramp() {
         band_limited: true,
         strict: false,
         max_padding: 1.0,
+        medium: 1.0,
     };
     let out = propagate(&band, 0.01, &cfg).unwrap();
     let k = 2.0 * PI / LAMBDA;
@@ -291,6 +293,7 @@ fn sampling_guard_and_mitigation() {
         band_limited: false,
         strict: true,
         max_padding: 1.0,
+        medium: 1.0,
     };
     match propagate(&band, z, &cfg_risk) {
         Err(PropagationError::AliasingRisk { report }) => {

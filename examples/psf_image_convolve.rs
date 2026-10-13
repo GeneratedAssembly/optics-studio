@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = AsmConfig::default();
     let mut bl = Beamline::new();
     bl.push(&stop, 0.0).push(&lens, F);
-    let psf = bl.psf(&band, |b, z| propagate(b, z, &cfg))?;
+    let psf = bl.psf(&band, |b, z, _n| propagate(b, z, &cfg))?;
 
     // Roll the centered kernel into wrap-around order (bin 0 = origin)
     // and truncate + renormalize: sum(kernel) = 1 exactly.
