@@ -167,6 +167,41 @@ pub enum OpticsError {
         /// Grid pitch along y in meters.
         dy: f64,
     },
+    /// The refractive surface profile is invalid: non-finite/zero vertex
+    /// radius, non-finite conic constant or polynomial coefficients, or a
+    /// clear aperture reaching beyond the conic domain
+    /// $1 - (1+k)c^2r^2 \ge 0$ (`r` = stop extent).
+    #[error(
+        "invalid refractive surface: radius = {radius} m, conic = {conic}, domain edge r = {r}"
+    )]
+    InvalidSurface {
+        /// Vertex radius of curvature in meters.
+        radius: f64,
+        /// Conic constant.
+        conic: f64,
+        /// Largest radius reaching out of domain.
+        r: f64,
+    },
+    /// A surface medium index was not finite and $> 0$ at the band
+    /// wavelength (front/back evaluated at normal incidence).
+    #[error(
+        "invalid surface media: n_front = {n_front}, n_back = {n_back} (must be finite and positive)"
+    )]
+    InvalidMedium {
+        /// Front medium index n(lambda, 0).
+        n_front: f64,
+        /// Back medium index n(lambda, 0).
+        n_back: f64,
+    },
+    /// The surface sag (or its analytic closure) returned a non-finite
+    /// value at an acted-on radius.
+    #[error("surface sag at r = {r} m is non-finite (got {sag})")]
+    InvalidSag {
+        /// Element-frame radius in meters.
+        r: f64,
+        /// The non-finite sag value.
+        sag: f64,
+    },
 }
 
 /// Physical outline of an element's clear aperture.
@@ -1596,6 +1631,393 @@ impl Element for BlazedGrating {
     }
 }
 
+/// Sag profile of a refractive (or Zemax-imported) surface, as a function
+/// of radial element-frame coordinate $r$ (meters), returning surface
+/// height $z$ (meters) relative to the vertex plane. Positive $z$ bulges
+/// along $+z$ — the direction of propagation — matching the Zemax
+/// standard-surface sign convention ($R > 0$: center of curvature to the
+/// right of the vertex).
+///
+/// The parametric forms implement the Zemax standard/even-asphere surface
+///
+/// $$z(r) = \frac{c\,r^2}{1 + \sqrt{1 - (1+k)\,c^2 r^2}} + \sum_{i\ge2} \alpha_i\, r^{2i},
+///   \qquad c = \frac{1}{R},$$
+///
+/// (rational conic form — numerically stable near the vertex; $k = 0$
+/// sphere, $k = -1$ paraboloid; textbook Sec. 4.2.2 gives the paraxial
+/// sag $t = r^2/2R$, Eq. 4.18). `Analytic` is the importer's escape hatch
+/// (spline/radial profiles); its domain and finiteness are checked only
+/// at evaluation (`InvalidSag`).
+// No `Clone`: the `Analytic` arm holds a boxed closure (crate convention).
+pub enum SurfaceProfile {
+    /// Sphere of radius `radius` (m; sign = bulge direction, nonzero finite).
+    Spherical {
+        /// Radius of curvature (m).
+        radius: f64,
+    },
+    /// Conic with vertex radius `radius` (m) and conic constant `conic`.
+    Conic {
+        /// Vertex radius of curvature (m).
+        radius: f64,
+        /// Conic constant $k$ ($0$ sphere, $-1$ paraboloid).
+        conic: f64,
+    },
+    /// Even asphere: conic plus $\sum_{j} \alpha_{j}\, r^{2(j+2)}$ —
+    /// `coeffs[0]` multiplies $r^4$, `coeffs[1]` $r^6$, and so on
+    /// (Zemax "Even asphere" ordering; coefficients in $1/\mathrm{m}^{2j+3}$).
+    EvenAsphere {
+        /// Vertex radius of curvature (m).
+        radius: f64,
+        /// Conic constant $k$.
+        conic: f64,
+        /// Even-power polynomial coefficients, starting at $r^4$.
+        coeffs: Vec<f64>,
+    },
+    /// Arbitrary radial sag closure $r \mapsto z$ (m to m).
+    Analytic(Box<dyn Fn(f64) -> f64>),
+}
+
+impl SurfaceProfile {
+    /// Surface height (m) at radial coordinate `r` (m). Not validated —
+    /// construction checks parametric profiles; [`RefractiveSurface::apply`]
+    /// rejects non-finite values (including out-of-domain square roots)
+    /// with `InvalidSag`.
+    pub fn sag(&self, r: f64) -> f64 {
+        match self {
+            Self::Spherical { radius } => conic_sag(r, *radius, 0.0, &[]),
+            Self::Conic { radius, conic } => conic_sag(r, *radius, *conic, &[]),
+            Self::EvenAsphere {
+                radius,
+                conic,
+                coeffs,
+            } => conic_sag(r, *radius, *conic, coeffs),
+            Self::Analytic(f) => f(r),
+        }
+    }
+
+    /// Slope $dz/dr$ (dimensionless) at radius `r` — the closed-form
+    /// derivative of the parametric forms (for [`RefractiveSurface::worst_phase_step`]).
+    fn slope(&self, r: f64) -> f64 {
+        match self {
+            Self::Spherical { radius } => conic_slope(r, *radius, 0.0, &[]),
+            Self::Conic { radius, conic } => conic_slope(r, *radius, *conic, &[]),
+            Self::EvenAsphere {
+                radius,
+                conic,
+                coeffs,
+            } => conic_slope(r, *radius, *conic, coeffs),
+            // Analytic: no closed-form derivative; bound by the sag itself
+            // is not sound, so callers get the parametric treatment only.
+            Self::Analytic(_) => f64::NAN,
+        }
+    }
+
+    /// Vertex curvature $c = 1/R$ (1/m), if parametric (`None` for
+    /// [`SurfaceProfile::Analytic`]).
+    pub fn vertex_curvature(&self) -> Option<f64> {
+        match self {
+            Self::Spherical { radius }
+            | Self::Conic { radius, .. }
+            | Self::EvenAsphere { radius, .. } => Some(1.0 / radius),
+            Self::Analytic(_) => None,
+        }
+    }
+
+    /// Construction-time parameter validation (finiteness, nonzero vertex
+    /// radius for parametric forms).
+    fn validate(&self) -> Result<(), OpticsError> {
+        let (radius, conic, coeffs) = match self {
+            Self::Spherical { radius } => (*radius, 0.0, &[][..]),
+            Self::Conic { radius, conic } => (*radius, *conic, &[][..]),
+            Self::EvenAsphere {
+                radius,
+                conic,
+                coeffs,
+            } => (*radius, *conic, &coeffs[..]),
+            Self::Analytic(_) => return Ok(()),
+        };
+        if !radius.is_finite()
+            || radius == 0.0
+            || !conic.is_finite()
+            || coeffs.iter().any(|a| !a.is_finite())
+        {
+            return Err(OpticsError::InvalidSurface {
+                radius,
+                conic,
+                r: f64::NAN,
+            });
+        }
+        Ok(())
+    }
+
+    /// Domain check: the conic square root requires
+    /// $1 - (1+k)c^2r^2 \ge 0$ wherever the surface acts. Returns `Err`
+    /// when the stop's extent reaches beyond that domain.
+    fn check_domain(&self, r_max: f64) -> Result<(), OpticsError> {
+        let (radius, conic) = match self {
+            Self::Spherical { radius } => (*radius, 0.0),
+            Self::Conic { radius, conic } | Self::EvenAsphere { radius, conic, .. } => {
+                (*radius, *conic)
+            }
+            Self::Analytic(_) => return Ok(()),
+        };
+        let c = 1.0 / radius;
+        let q = (1.0 + conic) * c * c * r_max * r_max;
+        if q > 1.0 {
+            return Err(OpticsError::InvalidSurface {
+                radius,
+                conic,
+                r: r_max,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Zemax standard-surface sag (rational conic form + even polynomial).
+fn conic_sag(r: f64, radius: f64, conic: f64, coeffs: &[f64]) -> f64 {
+    let c = 1.0 / radius;
+    let r2 = r * r;
+    let root = (1.0 - (1.0 + conic) * c * c * r2).max(0.0).sqrt();
+    let mut z = c * r2 / (1.0 + root);
+    // Even polynomial: coeffs[j] multiplies r^(2j+4), Horner in r2.
+    let mut poly = 0.0;
+    for a in coeffs.iter().rev() {
+        poly = poly * r2 + a;
+    }
+    z += poly * r2 * r2;
+    z
+}
+
+/// Slope of [`conic_sag`]: conic term $cr/\sqrt{1-(1+k)c^2r^2}$ plus the
+/// polynomial derivative $\sum_j 2(j+2)\alpha_j r^{2j+3}$.
+fn conic_slope(r: f64, radius: f64, conic: f64, coeffs: &[f64]) -> f64 {
+    let c = 1.0 / radius;
+    let r2 = r * r;
+    let arg = 1.0 - (1.0 + conic) * c * c * r2;
+    if arg <= 0.0 {
+        return f64::INFINITY;
+    }
+    let mut d = 0.0;
+    for (j, a) in coeffs.iter().enumerate() {
+        d += 2.0 * (j as f64 + 2.0) * a * r2.powf(j as f64 + 1.0);
+    }
+    c * r / arg.sqrt() + d * r
+}
+
+/// Ideal **refractive surface**: a curved boundary between two media,
+/// modeled as a local phase screen at its vertex plane (Phase 6 task a;
+/// the Zemax-import primitive — a prescription row maps to one of these
+/// plus a medium step).
+///
+/// $$t(x, y) = \exp\!\Big(i\,\frac{2\pi}{\lambda}\,[n_1(\lambda) - n_2(\lambda)]\,z(r)\Big),
+///   \qquad r = \lvert \mathbf{r}' \rvert,$$
+///
+/// with $z(r)$ the [`SurfaceProfile`] sag (Zemax sign convention) and
+/// $n_1, n_2$ the front/back media indices evaluated at normal incidence
+/// (`Material::n_at(lambda, 0.0)`; the angle argument is reserved). The
+/// sign is the physical one: a convex surface ($z > 0$) into a denser
+/// medium ($n_2 > n_1$) imposes a *decreasing* phase — converging — and
+/// paraxially $t \to \exp(-ik\rho^2 \Phi/2)$ with the standard surface
+/// power $\Phi = (n_2 - n_1)c$ (textbook Eqs. 4.3/4.18-4.21: OPD
+/// $(n-1)r^2/2R$, plano-convex $1/f = (n-1)/R$). Vertex piston is zero by
+/// construction ($z(0) = 0$).
+///
+/// The screen is **strictly local** (forward-compat choice 1): a thick
+/// lens is *composed* as surface → medium step → surface by the caller
+/// (or [`crate::beamline::Beamline`]), which reproduces the full
+/// lensmaker including the thickness term (Eq. 4.1) once medium-aware
+/// propagation is used; absorption coefficients are metadata here (the
+/// boundary screen carries no path length).
+///
+/// Sampling: the phase gradient is $k\,|n_1 - n_2|\,z'(r)$, worst at the
+/// stop rim — [`RefractiveSurface::worst_phase_step`] reports the
+/// closed-form adjacent-sample bound (parametric profiles only).
+// No `Clone`/`Debug`/`PartialEq` derives: the profile/material closures are
+// boxed; element identity is by value of its accessors.
+pub struct RefractiveSurface {
+    profile: SurfaceProfile,
+    front: Material,         // medium the beam arrives from
+    back: Material,          // medium the beam enters
+    orientation: Angle,      // rad, CCW about z (module docs)
+    aperture: ClearAperture, // stop geometry, meters from center
+    center: (f64, f64),      // vertex position, meters, field coordinates
+    shape: ElementShape,
+}
+
+impl RefractiveSurface {
+    /// Refractive surface with sag `profile`, front medium `front`, back
+    /// medium `back`, `orientation` (`None` = typical, normal to $z$),
+    /// clear aperture `aperture`, and vertex at `center` (m, m).
+    ///
+    /// # Errors
+    /// [`OpticsError::InvalidOrientation`] for a non-finite `Some` angle;
+    /// [`OpticsError::InvalidSurface`] for non-finite/zero radius,
+    /// non-finite conic/coefficients, or a stop whose extent reaches beyond
+    /// the conic domain ($1 - (1+k)c^2r^2 < 0$); the aperture/center follow
+    /// the shared rules (`InvalidAperture` / `InvalidAxis`).
+    pub fn new(
+        profile: SurfaceProfile,
+        front: Material,
+        back: Material,
+        orientation: Option<Angle>,
+        aperture: ClearAperture,
+        center: (f64, f64),
+    ) -> Result<Self, OpticsError> {
+        let orientation = resolve_orientation(orientation)?;
+        profile.validate()?;
+        aperture.validate(center)?;
+        if let Some(r_max) = aperture.extent_radius() {
+            profile.check_domain(r_max)?;
+        }
+        let shape = aperture.shape();
+        Ok(Self {
+            profile,
+            front,
+            back,
+            orientation,
+            aperture,
+            center,
+            shape,
+        })
+    }
+
+    /// Sag height (m) at radial element-frame coordinate `r` (m).
+    pub fn sag(&self, r: f64) -> f64 {
+        self.profile.sag(r)
+    }
+
+    /// The surface profile.
+    pub fn profile(&self) -> &SurfaceProfile {
+        &self.profile
+    }
+
+    /// Surface optical power $\Phi = (n_2(\lambda) - n_1(\lambda))\,c$
+    /// (1/m) at the vertex, or `None` for [`SurfaceProfile::Analytic`]
+    /// (no closed-form vertex curvature).
+    pub fn vertex_power(&self, lambda: f64) -> Option<f64> {
+        let c = self.profile.vertex_curvature()?;
+        let n1 = self.front.n_at(lambda, 0.0);
+        let n2 = self.back.n_at(lambda, 0.0);
+        Some((n2 - n1) * c)
+    }
+
+    /// Effective `n_at` of the two media at `lambda` (normal incidence).
+    pub fn indices_at(&self, lambda: f64) -> (f64, f64) {
+        (self.front.n_at(lambda, 0.0), self.back.n_at(lambda, 0.0))
+    }
+
+    /// Closed-form worst adjacent-sample phase step (rad), like
+    /// [`ThinLens::worst_phase_step`]: $k\,|n_1 - n_2|\,z'(r)\,\delta$ at
+    /// the farthest acting coordinate per axis. `NaN` for
+    /// [`SurfaceProfile::Analytic`] (no derivative bound).
+    pub fn worst_phase_step(&self, band: &BandField) -> f64 {
+        let slope_bound = match &self.profile {
+            SurfaceProfile::Analytic(_) => return f64::NAN,
+            p => p,
+        };
+        let lambda = band.lambda();
+        let (n1, n2) = self.indices_at(lambda);
+        if !n1.is_finite() || !n2.is_finite() {
+            return f64::INFINITY;
+        }
+        let (nx, ny) = band.field().dims();
+        let (dx, dy) = band.field().pitch();
+        let (cx, cy) = self.center;
+        let half_x = (nx as f64 - 1.0) / 2.0 * dx;
+        let half_y = (ny as f64 - 1.0) / 2.0 * dy;
+        let (ax, ay) = self.aperture.axis_halves_at(*self.orientation);
+        let rx = ax.min(half_x + cx.abs());
+        let ry = ay.min(half_y + cy.abs());
+        let k = 2.0 * PI / lambda;
+        let dn = (n2 - n1).abs();
+        let step_x = k * dn * slope_bound.slope(rx.max(0.0)) * dx;
+        let step_y = k * dn * slope_bound.slope(ry.max(0.0)) * dy;
+        step_x.max(step_y)
+    }
+}
+
+impl Element for RefractiveSurface {
+    fn shape(&self) -> &ElementShape {
+        &self.shape
+    }
+
+    fn kind(&self) -> ElementKind {
+        ElementKind::Lens
+    }
+
+    fn material(&self) -> (&Material, &Material) {
+        (&self.front, &self.back)
+    }
+
+    /// The surface's clear aperture — conservative half-side, or
+    /// `Unbounded` for [`ClearAperture::Field`].
+    fn extent(&self) -> Extent {
+        match self.aperture.extent_radius() {
+            Some(r) => Extent::Aperture(r),
+            None => Extent::Unbounded,
+        }
+    }
+
+    /// Paints $\exp\big(i k [n_1 - n_2] z(r)\big)$ inside the stop (hard
+    /// edge, boundary inclusive, like every phase element); zero outside.
+    ///
+    /// # Errors
+    /// [`OpticsError::InvalidSag`] when the profile returns a non-finite
+    /// value at an acted-on radius (out-of-domain analytic profiles,
+    /// square-root overflow); [`OpticsError::OutsideField`] if a stopped
+    /// surface's footprint exceeds the grid.
+    fn apply(&self, band: &BandField) -> Result<BandField, OpticsError> {
+        let (cx, cy) = self.center;
+        let psi = *self.orientation;
+        if let Some((fx, fy)) = self.aperture.footprint_at(psi) {
+            let (grid_half_x, grid_half_y) = grid_half_extents(band);
+            if cx.abs() + fx > grid_half_x || cy.abs() + fy > grid_half_y {
+                return Err(OpticsError::OutsideField {
+                    half_x: fx,
+                    half_y: fy,
+                    center_x: cx,
+                    center_y: cy,
+                    grid_half_x,
+                    grid_half_y,
+                });
+            }
+        }
+        let lambda = band.lambda();
+        let (n1, n2) = self.indices_at(lambda);
+        if !n1.is_finite() || !n2.is_finite() || n1 <= 0.0 || n2 <= 0.0 {
+            return Err(OpticsError::InvalidMedium {
+                n_front: n1,
+                n_back: n2,
+            });
+        }
+        let k = 2.0 * PI / lambda;
+        let dn = n1 - n2;
+        let mut out = band.clone();
+        let field = out.field_mut();
+        let (nx, ny) = field.dims();
+        for iy in 0..ny {
+            for ix in 0..nx {
+                let (x, y) = field.coord(ix, iy);
+                let (xr, yr) = (x - cx, y - cy);
+                let (fx, fy) = to_element_frame(xr, yr, psi);
+                let s = field.sample_mut(ix, iy);
+                if !self.aperture.contains(fx, fy) {
+                    *s = Complex64::ZERO;
+                    continue;
+                }
+                let r = fx.hypot(fy);
+                let z = self.profile.sag(r);
+                if !z.is_finite() {
+                    return Err(OpticsError::InvalidSag { r, sag: z });
+                }
+                *s *= ((k * dn * z) * Complex64::I).exp();
+            }
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2865,5 +3287,269 @@ mod tests {
         // is inside.
         assert_eq!(gout.field().sample(50, 90), Complex64::ZERO);
         assert!((gout.field().sample(60, 50).norm() - 1.0).abs() < 1e-12);
+    }
+
+    // --- Refractive surfaces (Phase 6, task a). ---
+
+    fn air() -> Material {
+        Material::new(|_l, _a| 1.0, |_l, _a| 0.0)
+    }
+
+    fn glass(n: f64) -> Material {
+        Material::new(move |_l, _a| n, move |_l, _a| 0.0)
+    }
+
+    fn wrap(phase: f64) -> f64 {
+        (phase + PI).rem_euclid(2.0 * PI) - PI
+    }
+
+    #[test]
+    fn sag_matches_zemax_standard_surface() {
+        // Sphere: rational form vs the geometric R - sqrt(R^2 - r^2)
+        // (agreement where the geometric form is numerically sound).
+        let r_big = 3.0e-3;
+        let sag_sphere = SurfaceProfile::Spherical { radius: 5e-3 };
+        let geo = 5e-3 - ((5e-3f64).powi(2) - r_big * r_big).sqrt();
+        assert!((sag_sphere.sag(r_big) - geo).abs() / geo < 1e-12);
+        // Paraboloid (k = -1): sag is EXACTLY c r^2 / 2 at every r.
+        let para = SurfaceProfile::Conic {
+            radius: 0.1,
+            conic: -1.0,
+        };
+        for r in [1e-3, 7e-3, 30e-3] {
+            assert!((para.sag(r) - r * r / 0.2).abs() < 1e-15);
+        }
+        // Even asphere: conic + a4 r^4 + a6 r^6 (Horner ordering).
+        let ea = SurfaceProfile::EvenAsphere {
+            radius: 0.1,
+            conic: 0.0,
+            coeffs: vec![2.0e9, -3.0e13],
+        };
+        let r = 4e-3;
+        let expect = {
+            let c = 10.0f64;
+            c * r * r / (1.0 + (1.0 - c * c * r * r).sqrt()) + 2.0e9 * r.powi(4)
+                - 3.0e13 * r.powi(6)
+        };
+        assert!((ea.sag(r) - expect).abs() < 1e-15);
+        // Analytic escape hatch passes through.
+        let an = SurfaceProfile::Analytic(Box::new(|r| r.abs().powi(3)));
+        assert!((an.sag(2e-3) - 8e-9).abs() < 1e-20);
+        assert!(an.vertex_curvature().is_none());
+    }
+
+    #[test]
+    fn vertex_power_and_paraxial_convergence() {
+        // Convex surface into a denser medium: power Phi = (n2 - n1)c
+        // (Eqs. 4.3/4.21), phase DECREASES with radius (converging), and
+        // near the axis phi ~ -k Phi rho^2 / 2 (sag ~ r^2/2R, Eq. 4.18).
+        let lam = lambda();
+        let surf = RefractiveSurface::new(
+            SurfaceProfile::Spherical { radius: 0.1 },
+            air(),
+            glass(1.5),
+            None,
+            ClearAperture::Circle(2e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let phi = surf.vertex_power(lam).unwrap();
+        assert!((phi - 5.0).abs() < 1e-12, "surface power {phi}");
+        // Plano-convex lensmaker anchor (Eq. 4.21): f = R/(n-1) = 0.2 m.
+        assert!((1.0 / phi - 0.2).abs() < 1e-12);
+
+        let band = band_101(); // unit amplitude, pi/3 carrier, 1 mm pitch
+        let out = surf.apply(&band).unwrap();
+        // Axis sample: zero vertex piston -> sample unchanged bit-exactly.
+        assert_eq!(out.field().sample(50, 50), band.field().sample(50, 50));
+        let k = 2.0 * PI / lam;
+        let carrier = PI / 3.0;
+        for (ix, iy, rho) in [(50usize, 51usize, 1e-3f64), (50, 52, 2e-3)] {
+            let s = out.field().sample(ix, iy);
+            let z = 0.1 - ((0.1f64).powi(2) - rho * rho).sqrt();
+            let expect = carrier + k * (1.0 - 1.5) * z; // dn = n1 - n2 = -0.5
+            assert!(wrap(s.arg() - expect).abs() < 1e-9, "phase at rho={rho}");
+            assert!((s.norm() - 1.0).abs() < 1e-12);
+        }
+        // Paraxial quadratic phi = -k Phi rho^2/2 at rho = 2 mm: exact sag
+        // adds the r^4/8R^3 term (k*dn*2e-9 ~ 1.3e-2 rad) -> tolerance 0.02.
+        let s = out.field().sample(50, 52);
+        let par = carrier - k * 5.0 * (2e-3f64).powi(2) / 2.0;
+        assert!(wrap(s.arg() - par).abs() < 0.02);
+    }
+
+    #[test]
+    fn surface_taxonomy_and_media_accessors() {
+        let surf = RefractiveSurface::new(
+            SurfaceProfile::Conic {
+                radius: 0.05,
+                conic: -1.0,
+            },
+            air(),
+            glass(1.5),
+            None,
+            ClearAperture::Circle(10e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let el: &dyn Element = &surf;
+        assert!(matches!(el.kind(), ElementKind::Lens));
+        assert!(matches!(el.shape(), ElementShape::Circle));
+        assert!(matches!(
+            el.extent(),
+            Extent::Aperture(r) if (r - 10e-3).abs() < 1e-18
+        ));
+        assert_eq!(surf.indices_at(lambda()), (1.0, 1.5));
+        let (f, b) = el.material();
+        assert_eq!(f.n_at(lambda(), 0.0), 1.0);
+        assert_eq!(b.n_at(lambda(), 0.0), 1.5);
+        // Field-aperture surface: unbounded, acts everywhere, unit modulus.
+        let wide = RefractiveSurface::new(
+            SurfaceProfile::Spherical { radius: 1.0 },
+            air(),
+            glass(1.5),
+            None,
+            ClearAperture::Field,
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let el: &dyn Element = &wide;
+        assert!(matches!(el.extent(), Extent::Unbounded));
+        let out = wide.apply(&band_101()).unwrap();
+        assert_eq!(
+            out.field().sample(50, 50),
+            band_101().field().sample(50, 50)
+        );
+        let corner = out.field().sample(0, 0);
+        assert!((corner.norm() - 1.0).abs() < 1e-12);
+        assert_ne!(corner, band_101().field().sample(0, 0)); // phase acted
+    }
+
+    #[test]
+    fn surface_validation_and_domain() {
+        // Zero radius / non-finite conic.
+        assert!(matches!(
+            RefractiveSurface::new(
+                SurfaceProfile::Spherical { radius: 0.0 },
+                air(),
+                glass(1.5),
+                None,
+                ClearAperture::Circle(1e-3),
+                (0.0, 0.0),
+            ),
+            Err(OpticsError::InvalidSurface { .. })
+        ));
+        assert!(matches!(
+            RefractiveSurface::new(
+                SurfaceProfile::Conic {
+                    radius: 0.1,
+                    conic: f64::NAN,
+                },
+                air(),
+                glass(1.5),
+                None,
+                ClearAperture::Circle(1e-3),
+                (0.0, 0.0),
+            ),
+            Err(OpticsError::InvalidSurface { .. })
+        ));
+        // Sphere R = 1 mm with a 2 mm stop: stop reaches past the equator
+        // (q = c^2 r^2 = 4 > 1) -> rejected at construction.
+        let built = RefractiveSurface::new(
+            SurfaceProfile::Spherical { radius: 1e-3 },
+            air(),
+            glass(1.5),
+            None,
+            ClearAperture::Circle(2e-3),
+            (0.0, 0.0),
+        );
+        assert!(matches!(
+            built,
+            Err(OpticsError::InvalidSurface { radius, conic, r })
+                if (radius - 1e-3).abs() < 1e-18 && conic == 0.0 && (r - 2e-3).abs() < 1e-18
+        ));
+        // Media out of range at apply time.
+        let nasty = RefractiveSurface::new(
+            SurfaceProfile::Spherical { radius: 0.1 },
+            air(),
+            Material::new(|_l, _a| 0.0, |_l, _a| 0.0),
+            None,
+            ClearAperture::Circle(1e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let err = nasty.apply(&band_101()).unwrap_err();
+        assert!(matches!(
+            err,
+            OpticsError::InvalidMedium { n_front, n_back }
+                if n_front == 1.0 && n_back == 0.0
+        ));
+        // Analytic closure leaving the domain at runtime.
+        let spline =
+            SurfaceProfile::Analytic(Box::new(|r| if r > 0.5e-3 { f64::NAN } else { r * r }));
+        let s = RefractiveSurface::new(
+            spline,
+            air(),
+            glass(1.5),
+            None,
+            ClearAperture::Field,
+            (0.0, 0.0),
+        )
+        .unwrap();
+        assert!(matches!(
+            s.apply(&band_101()),
+            Err(OpticsError::InvalidSag { .. })
+        ));
+    }
+
+    #[test]
+    fn surface_worst_phase_step_brackets_sweep() {
+        // R = 20 mm sphere, stop 10 mm, dn = 0.5, pitch 1 mm: closed-form
+        // rim slope bound must bracket the true worst adjacent sag step.
+        let surf = RefractiveSurface::new(
+            SurfaceProfile::Spherical { radius: 20e-3 },
+            air(),
+            glass(1.5),
+            None,
+            ClearAperture::Circle(10e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let band = band_101();
+        let reported = surf.worst_phase_step(&band);
+        let k = 2.0 * PI / band.lambda();
+        let mut sweep = 0.0f64;
+        for iy in 1..101 {
+            let (x0, y0) = band.field().coord(50, iy - 1);
+            let (x1, y1) = band.field().coord(50, iy);
+            let r0 = (x0 * x0 + y0 * y0).sqrt();
+            let r1 = (x1 * x1 + y1 * y1).sqrt();
+            // Both samples inside the stop: the edge pair (11 -> 10 mm)
+            // straddles the aperture discontinuity (outer sample is zeroed),
+            // which is not a kernel-sampling step.
+            if r0 <= 10e-3 && r1 <= 10e-3 {
+                let d = k * 0.5 * (surf.sag(r1) - surf.sag(r0));
+                sweep = sweep.max(d.abs());
+            }
+        }
+        assert!(
+            sweep <= reported * (1.0 + 1e-9),
+            "sweep {sweep} exceeds bound {reported}"
+        );
+        assert!(
+            reported < 1.5 * sweep,
+            "bound {reported} vacuous vs sweep {sweep}"
+        );
+        // Analytic profile: no closed-form derivative -> NaN.
+        let an = RefractiveSurface::new(
+            SurfaceProfile::Analytic(Box::new(|r| r * r)),
+            air(),
+            glass(1.5),
+            None,
+            ClearAperture::Circle(1e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        assert!(an.worst_phase_step(&band).is_nan());
     }
 }
