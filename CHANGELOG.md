@@ -7,6 +7,99 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+Phase 5: sources & output — Hermite-Gauss and Laguerre-Gauss mode
+initializers, the point-source spherical wave, the sampled-`PhaseMask`
+variant (D2 delivered), and `beamline` composition sugar with PSF
+validation; visualization/export backends deferred to the front-end
+project (library stays headless).
+
+### Decisions (approved in planning check-ins, 2026-10-12/13, Phase 5)
+
+- **Export/visualization backend deferred** (decision 1): the library stays
+  headless — plotting, serialization (PNG/FITS/CSV), and spectrum display
+  are front-end-project concerns. PSF work lands as **data** (intensity
+  grids) only.
+- **Ergonomics = minimal `Beamline` sugar, no `Propagator` trait**
+  (decision 2): ordered `(element, z_after)` steps over borrowed
+  `&dyn Element`; the engine is a caller-supplied closure
+  `FnMut(&BandField, f64) -> Result<BandField, E>` — per-engine configs and
+  the open engine-error unification stay out of the beamline API surface;
+  zero spacings skip the engine call.
+- **Mode normalization: orthonormal profiles** (decision 3): HG/LG mode
+  power is $A^2$ (Siegman/Goodman convention), contrasting `GaussianBeam`'s
+  peak-amplitude scale; `HG00 = LG00 = gaussian × sqrt(2/pi)/w0` pinned
+  bit-exactly. Total order capped at 64 (`InvalidMode`).
+- **Sampled PhaseMask: bilinear lattice, zero beyond span** (decision 4):
+  center-origin element-frame lattice (same convention as `Field`),
+  bilinear lookup, transparent (phase 0) outside the lattice extent within
+  the aperture; $O(N)$ construction validation.
+- **fft.rs reserved shift helpers REMOVED** (user-approved 2026-10-13):
+  `fftfreq_shifted`, `fftshift1d/2`, `ifftshift1d/2` had no consumer since
+  Phase 2 — every engine works in unshifted DFT order end-to-end, and the
+  Phase-5 headless decision defers display centering to the front-end.
+  Recoverable from git history if a real consumer appears.
+
+### Added
+
+- `sources` mode initializers (Phase 5 task a): `HermiteGaussBeam` /
+  `hermite_gauss` and `LaguerreGaussBeam` / `laguerre_gauss` — paraxial
+  mode families on the pinned $q$-form machinery ($w(z)$, $1/R(z)$, Gouy
+  $(N+1)\zeta$; LG azimuthal $e^{i\ell\varphi}$ = OAM $+\ell\hbar$ along
+  $+z$); physicists' Hermite / associated Laguerre polynomials by
+  dependency-free three-term recurrences; shared `envelope()` helper.
+  `SourcesError::InvalidMode { order, max }`, `MAX_MODE_ORDER = 64`.
+  7 unit tests: $\mathrm{HG}_{00} = \mathrm{LG}_{00} = $ `gaussian` $\times
+  \sqrt{2/\pi}/w_0$ (bit-exact, waist and off-waist), on-grid orthonormal
+  Gram ($<10^{-3}$), $(-1)^m$ reflection parity (bit-exact), LG ring radius
+  $w_0/\sqrt2$ + telescoping $2\pi\ell$ vortex winding (both signs),
+  $(N{+}1)\zeta$ Gouy on axis (incl. the $H_2(0) = -2$ phase flip and
+  HG11/LG01 on-axis nodes), eigenfunction propagation through Fresnel-TF
+  and ASM ($<10^{-3}$, four modes), validation.
+- `PhaseMask::sampled(values, dims, pitch, orientation, aperture, center)`
+  (Phase 5 task b, decision D2 delivered): sampled phase lattice in the
+  element frame — bilinear lookup (exact for linear profiles, reproduces
+  the DOE-lens quadratic at lattice points), zero phase beyond the span,
+  bit-exact rotation equivalence (pattern rotates with the stop),
+  construction-time validation. Public `SampledPhase` (`at`, `dims`,
+  `pitch`, `values`) + `PhaseMask::grid()`;
+  `OpticsError::{InvalidGrid, InvalidGridPitch}`; non-finite samples reuse
+  `InvalidPhase` at the lattice position. 4 unit tests.
+- `beamline` module (Phase 5 task c): `Beamline<'a>` ordered
+  `(element, z_after)` steps, `push` chaining, `trace` with caller-supplied
+  engine closure, `psf` returning `Psf` — detector intensity grid with
+  `samples/dims/pitch/coord/total_power/peak_bin/peak_position/centroid`;
+  `BeamlineError<E> = Element(OpticsError) | Engine(E)`. Runnable doctest;
+  6 unit tests incl. bit-for-bit equality with a hand-rolled chain and
+  zero-spacing call-skipping.
+- `sources::spherical(source, distance, amplitude, lambda, grid)` (Phase 5
+  task d): diverging point-source wave $A e^{ikr}/r$ — the finite-
+  conjugate PSF input; exact-$kr/r$ anchors, $+k\rho^2/2d$ diverging-sign
+  near-axis expansion, ASM↔Fresnel-TF cross-engine agreement (the
+  analytic-at-$d{+}z$ comparison is dominated by hard-window truncation
+  diffraction — documented why it is the wrong statement);
+  `SourcesError::InvalidSource`. 3 unit tests.
+- `tests/phase5.rs` (3 integration tests, task b–d chain): PSF of a
+  circular pupil through the beamline vs the $J_1$ Airy anchor (full
+  profile <3%, central lobe <2%, first dark ring ±2 bins); focal shift of
+  a tilted plane wave through a lens (centroid at $f\tan\theta$ within
+  20 µm, on-axis reference at origin); off-axis point source images at the
+  lens-equation location ($d_i = f d_o/(d_o-f)$, magnification $-d_i/d_o$,
+  centroid within 20 µm, spot concentration peak > 10× mean).
+- `examples/psf_image_convolve.rs` (task d): test-image blur via the
+  normalized PSF kernel (wrap-order roll, 1e-6 support truncation +
+  renormalization) — power preserved exactly, point-source centroids
+  unmoved within the even-grid half-bin ambiguity, deltas demonstrably
+  blurred.
+
+### Removed
+
+- `propagation::fft` reserved shift helpers (`fftfreq_shifted`,
+  `fftshift1d`, `ifftshift1d`, `fftshift2`, `ifftshift2`, private `shift2`)
+  and their three unit tests — no consumer from Phase 2 through Phase 5;
+  display centering is a front-end concern (Phase-5 decision, approved
+  2026-10-13). `fftfreq` (unshifted axis) remains, still consumed by the
+  transfer-function engines.
+
 ## [0.4.0] - 2026-10-12
 
 Phase 4: Rayleigh–Sommerfeld first-kind propagation engine (exact spherical

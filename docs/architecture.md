@@ -1,9 +1,10 @@
 # Architecture — `optics-rs`
 
 Module map, data flow, trait specs, and error taxonomy for the Diffractive
-Optics Engineering Suite (Phases 1–4: field representation, ASM/Fresnel/
+Optics Engineering Suite (Phases 1–5: field representation, ASM/Fresnel/
 Fraunhofer/Rayleigh–Sommerfeld propagation + regime guidance, thin element
-library, `sources` initializers).
+library, `sources` initializers incl. HG/LG modes and the point source,
+and `beamline` PSF composition).
 The physics rationale lives in [`physics.md`](physics.md); development
 protocol in [`../agents.md`](../agents.md).
 
@@ -20,19 +21,23 @@ protocol in [`../agents.md`](../agents.md).
                       │
         sources ──────┼──→ field (closed-form initializers → BandField)
                       │
-        propagation ──┴──→ field (algorithms over BandField)
+        propagation ──┼──→ field (algorithms over BandField)
             ├── fft        (private layer: rustfft wrapper, conventions)
             ├── asm        (exact Angular Spectrum)
             ├── fresnel    (paraxial: transfer function + convolution)
             ├── fraunhofer (far-field FT, regime-gated)
             ├── rayleigh_sommerfeld (exact RS-I spherical kernel, convolution)
             └── regime     (diagnostics: N_F, guards, engine recommendation)
+                      │
+        beamline ─────┴──→ element + propagation + field
+                         (composition sugar: (element, z) steps, trace, PSF)
 ```
 
 Hard rule (agents.md §4): **algorithms depend on data, never the reverse.**
 `propagation` depends on `field`; `field` knows nothing about propagation.
-Propagators are **free functions**, not methods; convenience sugar is a
-Phase 5 decision point.
+Propagators are **free functions**, not methods; composition sugar lives in
+`beamline` (Phase 5) — the loop a caller would write by hand, with the
+engine supplied as a closure so per-engine configs and errors stay open.
 
 ## 2. Modules
 
@@ -41,9 +46,10 @@ Phase 5 decision point.
 | `common` | Angle newtype (radians, derefs to f64), `J` imaginary unit | `Angle`, `J` |
 | `wave` | Scalar source/beam parameter records (pre-sampling) | `Wavelength`, `Polarization`, `Wave` |
 | `field` | Complex sample grids; wavelength decoupled from geometry | `Field`, `BandField`, `FieldError` |
-| `element` | Local field transformations; element taxonomy | `Element` trait, `EllipticalAperture`, `RectangularAperture`, `ThinLens`, `PhaseMask`, `BlazedGrating`, `ClearAperture`, `OpticsError`, `ElementShape`, `ElementKind`, `Extent`, `Material` |
-| `sources` | Closed-form field initializers → `BandField` | `GaussianBeam`, `gaussian`, `SourcesError` |
+| `element` | Local field transformations; element taxonomy | `Element` trait, `EllipticalAperture`, `RectangularAperture`, `ThinLens`, `PhaseMask`, `SampledPhase`, `BlazedGrating`, `ClearAperture`, `OpticsError`, `ElementShape`, `ElementKind`, `Extent`, `Material` |
+| `sources` | Closed-form field initializers → `BandField` | `GaussianBeam`, `gaussian`, `HermiteGaussBeam`, `hermite_gauss`, `LaguerreGaussBeam`, `laguerre_gauss`, `spherical`, `MAX_MODE_ORDER`, `SourcesError` |
 | `propagation` | Wave-optics engines + regime diagnostics | `asm`, `fresnel`, `fraunhofer`, `rayleigh_sommerfeld`, `regime` (public); `fft` (private) |
+| `beamline` | Composition sugar over the above | `Beamline`, `Psf`, `BeamlineError` |
 
 ### 2.1 `field` — the two-layer split
 
@@ -104,8 +110,13 @@ Concrete elements (physics: `physics.md` §9.1–9.4):
   (task-d shared enum: `Field | Circle | Ellipse | Rectangle` —
   "we can't square a circle"); `kind = Diffractive`; first non-finite
   closure value raises `InvalidPhase { x, y, phase }`; no sampling guard
-  (caller-side Nyquist duty documented); sampled-profile variant deferred
-  to Phase 5. `phase_at` probes take element-frame coordinates.
+  (caller-side Nyquist duty documented). **Sampled variant** (D2, Phase 5
+  task b): `PhaseMask::sampled(values, dims, pitch, orientation, aperture,
+  center)` — bilinear lookup on a center-origin element-frame lattice,
+  zero phase beyond the lattice span, $O(N)$ construction-time validation
+  (`InvalidGrid`, `InvalidGridPitch`, `InvalidPhase` at the lattice
+  position); `grid() -> Option<&SampledPhase>` exposes the lattice.
+  `phase_at` probes take element-frame coordinates.
 - `BlazedGrating` — sawtooth phase $\varphi = \Phi(((\mathbf{r}-\mathbf{c})
   \cdot\hat g/\Lambda) \bmod 1)$ with period $\Lambda$, depth $\Phi$,
   mandatory vector orientation ψ, `ClearAperture` stop; `kinoform()` sugar
@@ -120,26 +131,41 @@ reserved for refractive/absorptive and thick models in Phase 6).
 Closed-form paraxial solutions sampled onto a grid and bound to a
 wavelength, returning `BandField`s (decision D3: top-level module,
 multiband by construction — a source is a collection of `BandField`s).
-First initializer: `GaussianBeam` parameter record (`w0`, `amplitude`,
-`center`; SI meters, **no longitudinal position** — the signed
-waist-to-plane distance `z` is a sampling argument, per task-a review
-"position is a system property") and
-`gaussian(&beam, z, lambda, nx, ny, dx, dy) -> Result<BandField,
-SourcesError>` in the $e^{+ikz}$ $q$-form ($q = z - iz_R$; physics:
-`physics.md` §9.5). `beam_radius(z, lambda)` / `gouy_phase(z, lambda)`
-are explicit functions of the measurement plane. Sign conventions are
-pinned by cross-checks against the crate's own engines (unit tests).
-`SourcesError`: `InvalidBeam` / `InvalidPlane { z }` diagnostics plus
+All records are SI meters with **no longitudinal position** — the signed
+waist-to-plane (or source-to-plane) distance is a sampling argument, per
+task-a review "position is a system property". Initializers:
+
+- `GaussianBeam` + `gaussian(&beam, z, lambda, grid)` — fundamental mode,
+  $e^{+ikz}$ $q$-form ($q = z - iz_R$); `beam_radius(z, lambda)` /
+  `gouy_phase(z, lambda)` are functions of the measurement plane
+  (physics: `physics.md` §9.5).
+- `HermiteGaussBeam { w0, m, n, amplitude, center }` + `hermite_gauss`,
+  `LaguerreGaussBeam { w0, p, l, amplitude, center }` + `laguerre_gauss`
+  (Phase 5 task a): orthonormal mode families on the same $q$-form
+  machinery, Gouy $(N+1)\zeta$, LG winding $e^{i\ell\varphi}$ (OAM
+  $+\ell\hbar$); physicists' Hermite / associated Laguerre by dependency-
+  free recurrences; total order capped at `MAX_MODE_ORDER` (`InvalidMode`)
+  (physics: §9.6).
+- `spherical(source, distance, amplitude, lambda, grid)` (Phase 5 task d):
+  diverging point-source wave $A e^{ikr}/r$ — the PSF input for finite-
+  conjugate systems (physics: §9.6).
+
+Sign conventions are pinned by cross-checks against the crate's own engines
+(unit tests: modes and the spherical wave are Fresnel-TF/ASM eigenfunctions).
+`SourcesError`: `InvalidBeam` / `InvalidPlane { z }` / `InvalidMode { order,
+max }` / `InvalidSource { x, y, distance, amplitude }` diagnostics plus
 transparent `FieldError` carry.
 
 ### 2.4 `propagation` — engines
 
 - `fft` (private): NumPy-convention 2D transforms (unnormalized forward,
   $1/N$ inverse — exact circular convolution theorem) over row-major buffers via
-  rustfft, frequency axes, NumPy-semantics shifts. All conventions
-  (sign, scaling, bin order, shift) are documented in the module and pinned
+  rustfft, plus the unshifted frequency axis. All conventions
+  (sign, scaling, bin order) are documented in the module and pinned
   by dedicated unit tests *before* dependent code — per agents.md, these are
-  the primary bug source.
+  the primary bug source. Every engine works in unshifted DFT bin order
+  end-to-end; the reserved `fftshift` helpers were removed in Phase 5
+  (no consumer ever materialized — display centering is a front-end concern).
 - `asm` (public): exact transfer-function propagation with zero-padding and
   the Matsushima band-limit; closed-form $O(1)$ sampling guard with automatic
   densification in strict mode. `AsmConfig { padding, band_limited, strict,
@@ -194,12 +220,30 @@ pub fn regime_report(band: &BandField, z: f64, cfg: &FraunhoferConfig) -> Fraunh
 All engines are free functions; propagators depend on `field`, never the
 reverse, and never on `element` (composition is caller-side — see §3).
 
+### 2.5 `beamline` — composition sugar (Phase 5 task c)
+
+`Beamline<'a>` is an ordered `Vec<(&'a dyn Element, f64)>` of
+`(element, z_after)` steps — the loop a caller would write by hand, not a
+new abstraction layer. `trace(&band, propagate_closure)` applies each
+element and propagates nonzero spacings through the **caller-supplied
+engine closure** (`FnMut(&BandField, f64) -> Result<BandField, E>`,
+$E$: `std::error::Error`); zero spacings skip the engine call entirely.
+A closure rather than an engine enum: per-engine configs differ and the
+engine-error unification remains an open decision — the beamline API is
+stable as engines are added. `psf(&band, closure)` returns `Psf`: the
+detector-plane intensity grid $I = |u|^2$ with `coord`, `total_power`,
+`peak_bin`/`peak_position`, and `centroid` (sub-bin spot position).
+Elements stay caller-owned borrows; the beamline never picks an engine,
+guards, or resamples — `regime` stays the diagnostics authority.
+`BeamlineError<E>` = `Element(OpticsError)` | `Engine(E)` (untouched).
+
 ## 3. Data flow
 
 ```
-GaussianBeam (beam record) ──sources::gaussian──→ BandField (grid + λ)
-Wave (source params) ──────Phase 5────────→ Field ──bind λ──→ BandField
+GaussianBeam / HG / LG / point source ──sources::*──→ BandField (grid + λ)
+Wave (source params) ──────front-end────────→ Field ──bind λ──→ BandField
                                                         │
+                 Beamline::trace/psf (element, z) steps │  (composition sugar)
                           Element::apply (mask, phase)  │  local, at a plane
                                                         ↓
                                             BandField (plane z0)
@@ -231,12 +275,13 @@ proactively via the `*_report` functions.
 | Type | Module | Variants |
 |---|---|---|
 | `FieldError` | `field` | `EmptyGrid`, `DimensionMismatch { len, expected }`, `NonPositivePitch { dx, dy }`, `NonPositiveWavelength(λ)`, `NonFiniteSample` |
-| `OpticsError` | `element` | `InvalidAperture { half_x, half_y, center_x, center_y }` (footprint half-extents, all shapes), `OutsideField { …, grid_half_x, grid_half_y }` (bounding box for rotated stops), `InvalidAxis { center_x, center_y }`, `InvalidFocal { lambda, f }`, `InvalidPhase { x, y, phase }` (first non-finite closure value, element-frame position), `InvalidGrating { period, depth, orientation }`, `InvalidOrientation { radians }` |
-| `SourcesError` | `sources` | `InvalidBeam { w0, amplitude, cx, cy }`, `InvalidPlane { z }`, `Field(#[from] FieldError)` (transparent grid/wavelength carry) |
+| `OpticsError` | `element` | `InvalidAperture { half_x, half_y, center_x, center_y }` (footprint half-extents, all shapes), `OutsideField { …, grid_half_x, grid_half_y }` (bounding box for rotated stops), `InvalidAxis { center_x, center_y }`, `InvalidFocal { lambda, f }`, `InvalidPhase { x, y, phase }` (first non-finite closure value / sampled grid value, element-frame position), `InvalidGrating { period, depth, orientation }`, `InvalidOrientation { radians }`, `InvalidGrid { nx, ny, len }`, `InvalidGridPitch { dx, dy }` |
+| `SourcesError` | `sources` | `InvalidBeam { w0, amplitude, cx, cy }`, `InvalidPlane { z }`, `InvalidMode { order, max }`, `InvalidSource { x, y, distance, amplitude }`, `Field(#[from] FieldError)` (transparent grid/wavelength carry) |
 | `PropagationError` | `propagation::asm` | `InvalidDistance(z)` (non-finite only — signed z is valid), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `AliasingRisk { report: Box<SamplingReport> }` |
 | `FresnelError` | `propagation::fresnel` | same taxonomy; `AliasingRisk { report: Box<FresnelSamplingReport> }` (TF form: post-mitigation failure; convolution form: immediate kernel failure) |
 | `FraunhoferError` | `propagation::fraunhofer` | `InvalidDistance(z)` (non-finite **or zero** — far-field map singular at z=0), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `RegimeViolation { report: Box<FraunhoferReport> }` |
 | `RayleighSommerfeldError` | `propagation::rayleigh_sommerfeld` | `InvalidDistance(z)` (non-finite **or zero** — RS-I kernel is a $\delta$-distribution at z=0), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `AliasingRisk { report: Box<RayleighSommerfeldSamplingReport> }` (kernel undersampled; immediate — no densification) |
+| `BeamlineError<E>` | `beamline` | `Element(OpticsError)` (apply failure mid-trace), `Engine(E)` (the caller's engine error, preserved untouched); generic over the engine error type |
 
 `sampling_report` (asm, fresnel, rayleigh_sommerfeld) and `regime_report`
 (fraunhofer, regime)
@@ -247,8 +292,8 @@ one propagation-level type is a later API decision.
 ## 5. Testing strategy
 
 - **Unit tests** beside each module: grid/index/coordinate mapping, FFT
-  conventions (round-trip, Parseval $\times N$, bin/sign, shift semantics vs
-  NumPy, exact circular-convolution theorem), ASM internals (padding math,
+  conventions (round-trip, Parseval $\times N$, bin/sign, exact
+  circular-convolution theorem), ASM internals (padding math,
   band-limit vs z, identity, mitigation ladder), Fresnel guards (closed-form
   step = sweep maximum, complementarity, critical-sampling TF-vs-convolution
   agreement $<10^{-6}$, delta = sampled kernel), Fraunhofer (delta prefactor
@@ -260,19 +305,29 @@ one propagation-level type is a later API decision.
   dispersive closure + DOE-lens-equals-thin-lens sample-exact, grating sawtooth
   wrap + integer-$2\pi$ depth = tilted plane wave, `ClearAperture` predicates,
   uniform orientation (defaults/validation/rotated stops/bounding box), `Angle`
-  $[0,2\pi)$ wrapping, Gaussian $q$-form cross-engine agreement + $u(-z)$
-  conjugate.
+  $[0,2\pi)$ wrapping, sampled `PhaseMask` (bilinear lattice exact on linear
+  profiles, zero beyond span, rotation bit-exact, DOE-lens lattice $=$
+  `ThinLens` at lattice points, validation taxonomy), Gaussian $q$-form
+  cross-engine agreement + $u(-z)$ conjugate, HG/LG (orthonormal Gram,
+  eigenfunction propagation, parity, ring + vortex winding, $(N{+}1)$ Gouy,
+  $\mathrm{HG}_{00}$ anchor), spherical wave ($kr/r$ anchors, diverging sign,
+  cross-engine), `Beamline` (bit-for-bit vs manual chain, zero-spacing skip,
+  typed error arms, `Psf` intensity/geometry bookkeeping).
 - **Physical validation** (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`,
-  `tests/phase4.rs`;
+  `tests/phase4.rs`, `tests/phase5.rs`;
   shared analytics in `tests/common/mod.rs` — dependency-free quadrature for
-  $J_1$, Fresnel integrals, and the direct RS-I convolution integral): nineteen
+  $J_1$, Fresnel integrals, and the direct RS-I convolution integral): twenty-two
   analytics-based integration tests with
   stated tolerances — see the mapping table in `physics.md` §11. `tests/phase3.rs`
   validates grating orders through the Fraunhofer engine (kinoform 2π→+1,
   4π→+2, π→40/40 split). `tests/phase4.rs` validates the RS engine against the
   direct quadrature, ASM, and Fresnel (FFT$=$direct, three-discretizations
   agree, Fresnel diverges where its reported paraxial error says, round trip,
-  power conservation).
+  power conservation). `tests/phase5.rs` validates the PSF pipeline
+  (beamline-traced Airy of the pupil, focal shift $f\tan\theta$ of a tilted
+  plane wave, geometric image of an off-axis point source);
+  `examples/psf_image_convolve.rs` demonstrates test-image blur through a
+  normalized PSF kernel (power-preserving, centroids unmoved).
 - Gates: `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`,
   `cargo doc` (docstring/unit-documentation standard).
 
@@ -300,10 +355,16 @@ one propagation-level type is a later API decision.
   delivered as the validation truth, keeping the lib minimal); regime
   ladder unchanged (RS outside the recommendation — cross-validation
   engine).
-- **Phase 5** (sources & output): multimode/HG/LG initializers,
-  visualization/export (backend = decision point), API ergonomics
-  (convenience methods / `Propagator` trait). PSF graphing and standard
-  test-image convolution belong here or in the front-end project.
+- **Phase 5** (sources & output) — **implemented (tasks a–d), release
+  decision pending**: HG/LG mode initializers (orthonormal, $N \le 64$)
+  and `spherical` point source in `sources`; sampled-`PhaseMask` variant
+  (D2 delivered — bilinear element-frame lattice); `beamline` composition
+  sugar (`Beamline`/`trace`/`psf`/`Psf`, caller-supplied engine closure —
+  no `Propagator` trait refactor); PSF validation `tests/phase5.rs` +
+  `examples/psf_image_convolve.rs`. **Deferred by decision:**
+  visualization/export backend (front-end project — the library stays
+  headless); the reserved `fft.rs` shift helpers were removed (no
+  consumer ever materialized).
 - **Phase 6** (element library expansion — thick elements): thick lens
   (two surfaces + internal propagation, consuming `Extent::Thick` and the
   `Material` pair), mirrors, prisms, waveplates as wave-optics models.
@@ -320,9 +381,9 @@ one propagation-level type is a later API decision.
    a special case inside `apply`.
 2. Focal length is a **closure $f(\lambda)$** mirroring `Material`'s
    design — dispersive and achromatic doubles need no API change.
-3. Phase masks take an **analytic closure** $(x,y)\to$ phase now; the
-   sampled-profile variant arrives with Phase 5 export needs (inverse
-   design will produce sampled profiles).
+3. Phase masks take an **analytic closure** $(x,y)\to$ phase; the
+   sampled-profile variant (D2) arrived with Phase 5 for inverse-design
+   output.
 4. All engine reports are `Copy` with public fields — trivially
    serializable for the future front-end/export layer (serde is a Phase 5
    decision, not added now).

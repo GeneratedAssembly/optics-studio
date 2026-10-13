@@ -12,8 +12,11 @@
 //! [`element::Element`]s (apertures, thin lens, phase masks — the DOE
 //! interface — and blazed gratings, with thick elements in later phases),
 //! with closed-form field initializers in
-//! [`sources`] (Gaussian beam) producing [`field::BandField`]s ready for
-//! propagation.
+//! [`sources`] (Gaussian, Hermite-Gauss and Laguerre-Gauss modes, and the
+//! point-source spherical wave) producing [`field::BandField`]s ready for
+//! propagation, composed into systems by [`beamline::Beamline`] —
+//! `(element, z)` steps traced with a caller-supplied engine, or traced to
+//! a detector-plane PSF intensity grid.
 //!
 //! Ray tracing / geometric optics is deliberately out of scope (see
 //! `agents.md`). The physics models, formulas, and validity regimes are
@@ -37,6 +40,7 @@
 //! - **Sampling safety:** every propagator exposes and enforces
 //!   spatial-sampling criteria (`propagation::asm::sampling_report`,
 //!   `propagation::fresnel::sampling_report`,
+//!   `propagation::rayleigh_sommerfeld::sampling_report`,
 //!   `propagation::fraunhofer::regime_report`); undersampled transfers are
 //!   mitigated automatically where possible before an
 //!   `AliasingRisk`/`RegimeViolation` is raised, and `propagation::regime`

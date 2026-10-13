@@ -20,12 +20,11 @@
 //!   spectral mass in bin $+k_0$.
 //! - **Bin order.** [`fft2`] output is in standard (unshifted) DFT bin order:
 //!   bin $k$ corresponds to frequency $f_k = k / (N \Delta)$ with $k$ wrapped
-//!   negative above the Nyquist index — see [`fftfreq`]. [`fftfreq_shifted`]
-//!   returns the same axis in ascending `fftshift` order for building shifted
-//!   transfer functions.
-//! - **Shift semantics.** [`fftshift1d`] matches NumPy `fftshift` (roll by
-//!   $\lfloor n/2 \rfloor$), moving the zero-frequency bin to the array center;
-//!   [`ifftshift1d`] is its exact inverse (identical for even `n`).
+//!   negative above the Nyquist index — see [`fftfreq`]. Every engine works in
+//!   this order end-to-end (kernel sampling, transfer functions, extraction),
+//!   so no shift machinery is needed internally; display-oriented centering
+//!   is a consumer concern (front-end), and the reserved shift helpers were
+//!   removed in Phase 5 with no consumer ever materializing.
 //!
 //! All buffers are row-major flat slices of length `nx * ny` where `nx` runs
 //! along x (columns) and `ny` along y (rows); this layer is representation-
@@ -124,68 +123,6 @@ pub(crate) fn fftfreq(n: usize, d: f64) -> Vec<f64> {
             kk / (n as f64 * d)
         })
         .collect()
-}
-
-/// Frequency axis in ascending `fftshift` order (zero frequency at the center
-/// sample for odd `n`, just right of center for even `n`).
-// Consumed by spectrum reporting/visualization paths (Phase 1+ public surface); intentionally unused by the ASM transfer function, which works in unshifted bin order.
-#[allow(dead_code)]
-pub(crate) fn fftfreq_shifted(n: usize, d: f64) -> Vec<f64> {
-    let half = n / 2; // floor; shifted order starts at k = -half
-    (0..n)
-        .map(|i| (i as f64 - half as f64) / (n as f64 * d))
-        .collect()
-}
-
-/// NumPy-`fftshift` semantics on a 1D slice: roll right by `n / 2` (floor),
-/// moving index 0 (DC bin) to the center.
-// Consumed by spectrum reporting/visualization paths (Phase 1+ public surface); intentionally unused by the ASM transfer function, which works in unshifted bin order.
-#[allow(dead_code)]
-pub(crate) fn fftshift1d(v: &[Complex64]) -> Vec<Complex64> {
-    let n = v.len();
-    let s = n / 2;
-    (0..n).map(|i| v[(i + n - s) % n]).collect()
-}
-
-/// Exact inverse of [`fftshift1d`] (identical to it for even `n`).
-// Consumed by spectrum reporting/visualization paths (Phase 1+ public surface); intentionally unused by the ASM transfer function, which works in unshifted bin order.
-#[allow(dead_code)]
-pub(crate) fn ifftshift1d(v: &[Complex64]) -> Vec<Complex64> {
-    let n = v.len();
-    let s = n / 2;
-    (0..n).map(|i| v[(i + s) % n]).collect()
-}
-
-/// [`fftshift1d`] applied along both axes of a row-major `nx` x `ny` buffer.
-// Consumed by spectrum reporting/visualization paths (Phase 1+ public surface); intentionally unused by the ASM transfer function, which works in unshifted bin order.
-#[allow(dead_code)]
-pub(crate) fn fftshift2(buf: &[Complex64], nx: usize, ny: usize) -> Vec<Complex64> {
-    shift2(buf, nx, ny, false)
-}
-
-/// [`ifftshift1d`] applied along both axes of a row-major `nx` x `ny` buffer.
-// Consumed by spectrum reporting/visualization paths (Phase 1+ public surface); intentionally unused by the ASM transfer function, which works in unshifted bin order.
-#[allow(dead_code)]
-pub(crate) fn ifftshift2(buf: &[Complex64], nx: usize, ny: usize) -> Vec<Complex64> {
-    shift2(buf, nx, ny, true)
-}
-
-fn shift2(buf: &[Complex64], nx: usize, ny: usize, inverse: bool) -> Vec<Complex64> {
-    assert_eq!(buf.len(), nx * ny);
-    let (sx, sy) = (nx / 2, ny / 2);
-    let mut out = vec![Complex64::ZERO; nx * ny];
-    for iy in 0..ny {
-        for ix in 0..nx {
-            // fftshift: out[i] = x[(i + n - s) % n]; ifftshift: out[i] = x[(i + s) % n]
-            let (fx, fy) = if inverse {
-                ((ix + sx) % nx, (iy + sy) % ny)
-            } else {
-                ((ix + nx - sx) % nx, (iy + ny - sy) % ny)
-            };
-            out[iy * nx + ix] = buf[fy * nx + fx];
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -319,57 +256,5 @@ mod tests {
         assert_eq!(f4, vec![0.0, 0.25, -0.5, -0.25]);
         let f5 = fftfreq(5, 1.0);
         assert_eq!(f5, vec![0.0, 0.2, 0.4, -0.4, -0.2]);
-        let s4 = fftfreq_shifted(4, 1.0);
-        assert_eq!(s4, vec![-0.5, -0.25, 0.0, 0.25]);
-        let s5 = fftfreq_shifted(5, 1.0);
-        assert_eq!(s5, vec![-0.4, -0.2, 0.0, 0.2, 0.4]);
-        // Shifted axis is exactly fftshift of the unshifted axis.
-        let shifted_from_unshifted: Vec<f64> = {
-            let f = fftfreq(5, 1.0);
-            let n = f.len();
-            let s = n / 2;
-            (0..n).map(|i| f[(i + n - s) % n]).collect()
-        };
-        assert_eq!(shifted_from_unshifted, s5);
-    }
-
-    #[test]
-    fn shifts_follow_numpy_roll_convention() {
-        let v: Vec<Complex64> = (0..4).map(|i| Complex64::new(i as f64, 0.0)).collect();
-        // fftshift even: [2,3,0,1]; ifftshift identical for even n.
-        assert_eq!(fftshift1d(&v)[0].re, 2.0);
-        assert_eq!(fftshift1d(&v), ifftshift1d(&v));
-        let w: Vec<Complex64> = (0..5).map(|i| Complex64::new(i as f64, 0.0)).collect();
-        // fftshift odd (roll +2): [3,4,0,1,2]; ifftshift (roll -2): [2,3,4,0,1].
-        let fs = fftshift1d(&w);
-        let mut re = [0.0; 5];
-        for (i, r) in re.iter_mut().enumerate() {
-            *r = fs[i].re;
-        }
-        assert_eq!(re, [3.0, 4.0, 0.0, 1.0, 2.0]);
-        let is = ifftshift1d(&w);
-        let mut re = [0.0; 5];
-        for (i, r) in re.iter_mut().enumerate() {
-            *r = is[i].re;
-        }
-        assert_eq!(re, [2.0, 3.0, 4.0, 0.0, 1.0]);
-        // Exact inverses for both parities.
-        for src in [&v, &w] {
-            assert_eq!(&ifftshift1d(&fftshift1d(src)), src);
-            assert_eq!(&fftshift1d(&ifftshift1d(src)), src);
-        }
-    }
-
-    #[test]
-    fn shift2_roundtrips_and_moves_dc_to_center() {
-        let (nx, ny) = (4, 3);
-        let u = noise(nx * ny);
-        assert_eq!(ifftshift2(&fftshift2(&u, nx, ny), nx, ny), u);
-        // DC bin (index 0) lands at (nx/2, ny/2) = (2, 1) after fftshift2.
-        let mut spec = vec![Complex64::ZERO; nx * ny];
-        spec[0] = Complex64::new(7.0, 0.0);
-        let shifted = fftshift2(&spec, nx, ny);
-        let center = (ny / 2) * nx + nx / 2; // (ix=2, iy=1)
-        assert_eq!(shifted[center], Complex64::new(7.0, 0.0));
     }
 }

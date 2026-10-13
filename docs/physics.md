@@ -1,11 +1,12 @@
 # Physics — Wave-Optics Propagation in `optics-rs`
 
 This document details the mathematical models, transfer functions, and
-validity regimes implemented in Phases 1–4 (ASM exact; Fresnel transfer-
+validity regimes implemented in Phases 1–5 (ASM exact; Fresnel transfer-
 function and convolution forms; Fraunhofer far field; Rayleigh–Sommerfeld
 first kind; regime guidance; thin elements — apertures, dispersive thin
-lens, phase-mask DOE interface, blazed grating — and the Gaussian-beam
-source).
+lens, phase-mask DOE interface (analytic and sampled), blazed grating —
+and sources: Gaussian/Hermite-Gauss/Laguerre-Gauss beams and the
+point-source spherical wave, composed into PSF pipelines by `beamline`).
 The ultimate source of truth is
 *Diffractive Optics: Design, Fabrication, and Test* (SPIE TT95, the textbook
 PDF at the repository root); references below use its numbering.
@@ -440,7 +441,17 @@ closed-form worst step, and $O(N^2)$ warning sweeps are against project
 guidelines — the caller-side Nyquist duty is $|\nabla\varphi|\cdot\delta < \pi$.
 The first non-finite closure value raises
 `InvalidPhase { x, y, phase }` with its element-frame position. The
-sampled-profile variant (inverse design output) arrives with Phase 5 (D2).
+**sampled-profile variant** (Phase-3 decision D2, delivered Phase 5 task b)
+is `PhaseMask::sampled(values, dims, pitch, orientation, aperture, center)`:
+phase samples on a **center-origin rectangular lattice in the element
+frame** (the same convention as `Field`, §1) with bilinear lookup, **zero
+phase beyond the lattice span** (transparent within the aperture). Bilinear
+interpolation is exact for a linear profile and reproduces the DOE-lens
+quadratic at every lattice point (validated); the caller-side Nyquist duty
+becomes resolving the profile on the lattice. Structural errors are
+rejected at construction (`InvalidGrid`, `InvalidGridPitch`), and a
+one-time $O(N)$ scan rejects non-finite samples (`InvalidPhase` at the
+lattice position).
 
 ### 9.4 Blazed grating and diffraction orders (Phase 3, task e)
 
@@ -503,6 +514,52 @@ ASM propagation of a waist beam reproduce the analytic initializer at $z$
 (unit tests; the on-axis phase $kz - \zeta(z)$ was pinned by `tests/phase2.rs`
 test 7).
 
+### 9.6 Higher-order modes and the point source (Phase 5, tasks a, d)
+
+`sources::hermite_gauss` / `sources::laguerre_gauss` sample the paraxial
+$\mathrm{HG}_{mn}$ / $\mathrm{LG}_{p\ell}$ families on the same $q$-form
+machinery (Siegman/Goodman — the project textbook does not cover them):
+
+$$u_{mn} \propto \frac{H_m(\sqrt2 x/w)\,H_n(\sqrt2 y/w)}{w(z)}\,
+  e^{-\rho^2/w^2}\,e^{\,ik\rho^2/2R}\,e^{\,i(kz - (m+n+1)\zeta)},$$
+
+$$u_{p\ell} \propto \frac{(\sqrt2 r/w)^{|\ell|}\,L_p^{|\ell|}(2r^2/w^2)}{w(z)}\,
+  e^{-r^2/w^2}\,e^{\,ikr^2/2R}\,e^{\,i\ell\varphi}\,
+  e^{\,i(kz - (2p+|\ell|+1)\zeta)},$$
+
+physicists' $H_m$ and associated $L_p^\alpha$ by three-term recurrences
+(dependency-free). Conventions: **orthonormal profiles** (mode power $= A^2$,
+contrasting `GaussianBeam`'s peak-amplitude scale; $\mathrm{HG}_{00} =
+\mathrm{LG}_{00} = $ `gaussian` $\times\sqrt{2/\pi}/w_0$, pinned bit-exactly);
+Gouy phase $(N+1)\zeta$ with total order $N$; LG azimuthal $e^{i\ell\varphi}$
+carries OAM $+\ell\hbar$ per photon along $+z$ in the crate's $e^{+ikz}$
+frame. The orders are capped at `MAX_MODE_ORDER = 64` (`InvalidMode`).
+Convention pins: HG/LG at the waist propagate through **Fresnel-TF and ASM**
+to the analytic mode at $z$ ($<10^{-3}$, the eigenfunction tests), plus
+on-grid orthonormality, $(-1)^m$ reflection parity, the LG ring radius
+$w_0/\sqrt2$, exact $2\pi\ell$ vortex winding, and the $(N{+}1)$ Gouy
+tripling on axis (with the $H_2(0) = -2$ phase flip).
+
+`sources::spherical` samples the diverging point-source wave
+$u = A\,e^{ikr}/r$, $r = \sqrt{(x-x_s)^2 + (y-y_s)^2 + d^2}$ — the exact
+Helmholtz solution at a plane distance $d$ downstream of the source
+(Huygens secondaries, Sec. 1.4, as an initializer; $d \le 0$ rejected,
+`InvalidSource`). Near the axis the phase is $kd + k\rho^2/2d + \cdots$:
+**positive** curvature (diverging), the mirror of the converging lens.
+Caveat: a spherical wave is nonzero at the window edge, so ASM/Fresnel
+propagation of the *sampled* wave equals the analytic wave at $d+z$ only
+up to hard-edge truncation diffraction ($\sim\sqrt{\lambda z}$ of spread
+from the window boundary) — the cross-engine statement is ASM $\leftrightarrow$
+Fresnel-TF on the same input (validated $<10^{-3}$); the absolute
+convention pins are the exact-$kr/r$ anchors and the near-axis expansion.
+
+**PSF composition** (`beamline`): tracing a point source or tilted plane
+wave through `(element, z)` steps and taking $I = |u|^2$ is the coherent
+PSF — classical imaging anchors validated in `tests/phase5.rs` (§11 rows
+20–22): Airy of the pupil stop, focal shift $x = f\tan\theta$ of a tilted
+plane wave, and the lens-equation image $d_i = f d_o/(d_o - f)$ with
+magnification $-d_i/d_o$ for an off-axis point.
+
 ## 10. Validity regime and limitations
 
 - Scalar theory; polarization stays a `Wave`-level property (no vector field
@@ -528,8 +585,13 @@ test 7).
   lives in the $f(\lambda)$ closure (§9.2); `Material` $n(\lambda, \text{angle})$
   closures are reserved for refractive/thick models (Phase 6), and the
   grating depth-to-phase relation (§9.4) is fabrication-side, not applied.
+- Sources (§9.5–9.6) are paraxial modes ($N \le 64$ cap) and the scalar
+  spherical wave; mode windows must cover $\sim\sqrt{N}\,w(z)$, and the
+  spherical wave's hard window edge bounds any absolute-field comparison
+  (§9.6 caveat). PSF work is headless: intensity grids only — plotting and
+  serialization live in the front-end project (Phase-5 decision 1).
 
-## 11. Verification mapping (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`, `tests/phase4.rs`)
+## 11. Verification mapping (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`, `tests/phase4.rs`, `tests/phase5.rs`)
 
 | # | Test | Physics statement | Analytic anchor | Tolerance |
 |---|---|---|---|---|
@@ -552,6 +614,17 @@ test 7).
 | 17 | Fresnel diverges where reported (phase4) | paraxial truncation vs RS truth at aperture-rich corner bins | $k|z|s^2/8 \approx 0.29$ rad; report `max_phase_error_vs_asm` | RS $< 2\cdot10^{-2}$; Fresnel $> 4\times$ RS error, $< 0.3$ |
 | 18 | Round trip $+z/-z$ (phase4) | conjugate spherical kernel inverts the operator | $h(\cdot,-z) = \overline{h(\cdot,z)}$ | rel $< 3\cdot10^{-2}$ ($\sim 1/$zones ripple) |
 | 19 | Power conservation (phase4) | $\lvert H_{RS}\rvert = 1$ on band | discrete power invariant | rel drift $< 10^{-3}$ |
+| 20 | PSF is Airy (phase5) | stopped pupil traced through `Beamline::psf` = circular-aperture far field | $[2J_1(v)/v]^2$; $r_1 = 1.22\lambda z/2a$ | full profile $< 3\%$, central lobe $< 2\%$, $r_1$ $\pm 2$ bins |
+| 21 | Focal shift vs field angle (phase5) | tilted plane wave through lens focuses at $x = f\tan\theta$ | $1.22\lambda f/2a$ spot, centroid estimator | centroid $< 20\,\mu$m; on-axis $\to$ origin |
+| 22 | Point source images geometrically (phase5) | off-axis spherical wave through lens $\to$ image at $d_i = fd_o/(d_o-f)$, $m = -d_i/d_o$ | lens equation + magnification | centroid $< 20\,\mu$m; peak $> 10\times$ mean |
+
+Sources/mode physics additionally pinned by unit tests in `src/sources.rs`:
+HG/LG eigenfunction propagation through Fresnel-TF and ASM ($<10^{-3}$),
+on-grid orthonormality, $(-1)^m$ parity, LG ring $w_0/\sqrt2$ and $2\pi\ell$
+vortex winding, $(N{+}1)$ Gouy on axis, $\mathrm{HG}_{00}=\mathrm{LG}_{00}=$
+`gaussian`$\times\sqrt{2/\pi}/w_0$, spherical-wave $kr/r$ anchors and the
+diverging $+k\rho^2/2d$ sign, and the `Beamline::psf` intensity/geometry
+bookkeeping (`src/beamline.rs`).
 
 Element/source physics additionally pinned by unit tests in `src/element.rs`
 and `src/sources.rs`: thin-lens Fourier property ($w_0' = \lambda f/\pi w_0$,
@@ -586,6 +659,7 @@ closed-form brackets a brute-force sweep, RS $\equiv$ ASM on a smooth band.
    the far-field-is-the-aperture-FT relation; the explicit $J_1$ form is the
    classical evaluation of that transform).
 4. A. E. Siegman, *Lasers*, and Goodman — paraxial Gaussian beam $q(z)$
-   solution (the project textbook does not restate it; the crate's
-   $e^{+ikz}$ form $q = z - iz_R$ is pinned against its own validated
-   engines, §9.5).
+   solution and the Hermite/Laguerre-Gauss mode families with their
+   orthonormal normalizations (the project textbook does not restate
+   them; the crate's $e^{+ikz}$ form $q = z - iz_R$ and $e^{i\ell\varphi}$
+   OAM sign are pinned against its own validated engines, §9.5–9.6).
