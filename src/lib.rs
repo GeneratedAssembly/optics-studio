@@ -60,6 +60,7 @@
 //! assert_eq!(far.field().dims(), (64, 64)); // same grid, same wavelength
 //! ```
 
+pub mod beamline;
 pub mod common;
 pub mod element;
 pub mod field;
