@@ -202,6 +202,21 @@ pub enum OpticsError {
         /// The non-finite sag value.
         sag: f64,
     },
+    /// The lens central thickness was not finite and non-negative (m).
+    #[error("lens thickness must be finite and >= 0 (got {thickness} m)")]
+    InvalidThickness {
+        /// Central thickness in meters.
+        thickness: f64,
+    },
+    /// The wedge apex angle or base thickness was not finite (radians /
+    /// meters).
+    #[error("invalid wedge: angle = {angle} rad, base thickness = {base_thickness} m")]
+    InvalidWedge {
+        /// Apex angle in radians.
+        angle: f64,
+        /// Base (vertex-side) thickness in meters.
+        base_thickness: f64,
+    },
 }
 
 /// Physical outline of an element's clear aperture.
@@ -2018,6 +2033,410 @@ impl Element for RefractiveSurface {
     }
 }
 
+/// Ideal **thick lens as a single-plane screen**: the convenience form of
+/// a spherical-convex/concave lens whose glass thickness profile
+/// $t(\rho) = t_0 - z_1(\rho) + z_2(\rho)$ (sags of front/back
+/// [`SurfaceProfile`]s, book's "sag equation" Sec. 4.2.2) is painted as one
+/// local phase screen
+///
+/// $$\varphi(\rho; \lambda) = \frac{2\pi}{\lambda}\,[n(\lambda) - 1]\,t(\rho),$$
+///
+/// — textbook Eq. 4.17 generalized to exact sag profiles. The vertex
+/// piston $k(n-1)t_0$ is carried (physical: on-axis OPD through the glass);
+/// the paraxial quadratic is the thin-lens law $1/f = (n-1)(c_1 - c_2)$
+/// (Eq. 4.2), and the exact profiles contribute real **spherical
+/// aberration** (marginal rays focus short, Sec. 4.1.5).
+///
+/// **What this model does not include:** principal-plane separation and
+/// the thickness term of the full lensmaker Eq. 4.1 — those require
+/// propagation *inside* the glass, i.e. the composition
+/// [`RefractiveSurface`] $\to$ [`crate::beamline::Beamline::gap`]$(t_0, n)$
+/// $\to$ [`RefractiveSurface`], which is the Zemax-faithful path (Phase 6
+/// decision: this element is a convenience, the surface-stack composition
+/// is the primary model). Valid for $t_0 \ll f$; both sags are evaluated at
+/// the same plane (paraxial ray heights).
+///
+/// The `material` pair is the glass on both interfaces (surrounding medium
+/// is implicit air, $n_0 = 1$); `extent()` reports
+/// [`Extent::Thick { aperture, thickness }`] — the first consumer of the
+/// variant reserved since Phase 1.
+// No `Clone`/`Debug`/`PartialEq` derives: boxed profile/material closures.
+pub struct ThickLens {
+    front: SurfaceProfile,
+    back: SurfaceProfile,
+    material: Material,
+    thickness: f64,
+    orientation: Angle,
+    aperture: ClearAperture,
+    center: (f64, f64),
+    shape: ElementShape,
+}
+
+impl ThickLens {
+    /// Thick lens from front/back sag profiles (`radius > 0` bulges toward
+    /// the incoming beam for the front surface in the Zemax sign
+    /// convention), glass `material`, central thickness `thickness` (m,
+    /// finite and $\ge 0$), `orientation` (`None` = typical), clear
+    /// aperture, and center (m, m).
+    ///
+    /// # Errors
+    /// [`OpticsError::InvalidOrientation`], [`OpticsError::InvalidSurface`]
+    /// (profile parameters or conic domain vs the stop, either surface),
+    /// [`OpticsError::InvalidThickness`], and the shared aperture rules.
+    pub fn new(
+        front: SurfaceProfile,
+        back: SurfaceProfile,
+        material: Material,
+        thickness: f64,
+        orientation: Option<Angle>,
+        aperture: ClearAperture,
+        center: (f64, f64),
+    ) -> Result<Self, OpticsError> {
+        let orientation = resolve_orientation(orientation)?;
+        front.validate()?;
+        back.validate()?;
+        if !thickness.is_finite() || thickness < 0.0 {
+            return Err(OpticsError::InvalidThickness { thickness });
+        }
+        aperture.validate(center)?;
+        if let Some(r_max) = aperture.extent_radius() {
+            front.check_domain(r_max)?;
+            back.check_domain(r_max)?;
+        }
+        let shape = aperture.shape();
+        Ok(Self {
+            front,
+            back,
+            material,
+            thickness,
+            orientation,
+            aperture,
+            center,
+            shape,
+        })
+    }
+
+    /// Glass thickness (m) at element-frame radius `r`:
+    /// $t_0 - z_1(r) + z_2(r)$ (Eq. 4.17's $t$).
+    pub fn thickness_profile(&self, r: f64) -> f64 {
+        self.thickness - self.front.sag(r) + self.back.sag(r)
+    }
+
+    /// Vertex paraxial power $\Phi = (n(\lambda)-1)(c_1 - c_2)$ (Eq. 4.3),
+    /// `None` if either profile is analytic.
+    pub fn power_at(&self, lambda: f64) -> Option<f64> {
+        let c1 = self.front.vertex_curvature()?;
+        let c2 = self.back.vertex_curvature()?;
+        Some((self.material.n_at(lambda, 0.0) - 1.0) * (c1 - c2))
+    }
+
+    /// Paraxial focal length $1/\Phi$ (m) at `lambda`, `None` for analytic
+    /// profiles (or zero power).
+    pub fn focal_at(&self, lambda: f64) -> Option<f64> {
+        self.power_at(lambda)
+            .and_then(|p| (p != 0.0).then(|| 1.0 / p))
+    }
+
+    /// Closed-form worst adjacent-sample phase step:
+    /// $k\,|n-1|\,(|z_1'(r)| + |z_2'(r)|)\,\delta$ at the farthest acting
+    /// coordinate per axis (triangle bound on the sag-difference slope).
+    /// `NaN` when either profile is analytic.
+    pub fn worst_phase_step(&self, band: &BandField) -> f64 {
+        let (s1, s2) = (self.front.slope(0.0), self.back.slope(0.0));
+        if s1.is_nan() || s2.is_nan() {
+            return f64::NAN;
+        }
+        let lambda = band.lambda();
+        let n = self.material.n_at(lambda, 0.0);
+        if !n.is_finite() {
+            return f64::INFINITY;
+        }
+        let (nx, ny) = band.field().dims();
+        let (dx, dy) = band.field().pitch();
+        let (cx, cy) = self.center;
+        let half_x = (nx as f64 - 1.0) / 2.0 * dx;
+        let half_y = (ny as f64 - 1.0) / 2.0 * dy;
+        let (ax, ay) = self.aperture.axis_halves_at(*self.orientation);
+        let rx = ax.min(half_x + cx.abs());
+        let ry = ay.min(half_y + cy.abs());
+        let k = 2.0 * PI / lambda;
+        let dn = (n - 1.0).abs();
+        let step_x = k
+            * dn
+            * (self.front.slope(rx.max(0.0)).abs() + self.back.slope(rx.max(0.0)).abs())
+            * dx;
+        let step_y = k
+            * dn
+            * (self.front.slope(ry.max(0.0)).abs() + self.back.slope(ry.max(0.0)).abs())
+            * dy;
+        step_x.max(step_y)
+    }
+}
+
+impl Element for ThickLens {
+    fn shape(&self) -> &ElementShape {
+        &self.shape
+    }
+
+    fn kind(&self) -> ElementKind {
+        ElementKind::Lens
+    }
+
+    fn material(&self) -> (&Material, &Material) {
+        (&self.material, &self.material)
+    }
+
+    /// Clear aperture plus central thickness — [`Extent::Thick`], or
+    /// `Unbounded` for [`ClearAperture::Field`].
+    fn extent(&self) -> Extent {
+        match self.aperture.extent_radius() {
+            Some(r) => Extent::Thick {
+                aperture: r,
+                thickness: self.thickness,
+            },
+            None => Extent::Unbounded,
+        }
+    }
+
+    /// Paints $\exp(i k (n-1) t(\rho))$ inside the stop (hard edge,
+    /// boundary inclusive); zero outside.
+    ///
+    /// # Errors
+    /// [`OpticsError::InvalidMedium`] for bad glass index at the band;
+    /// [`OpticsError::InvalidSag`] for non-finite profile values at acted-on
+    /// radii; [`OpticsError::OutsideField`] for oversized footprints.
+    fn apply(&self, band: &BandField) -> Result<BandField, OpticsError> {
+        let (cx, cy) = self.center;
+        let psi = *self.orientation;
+        if let Some((fx, fy)) = self.aperture.footprint_at(psi) {
+            let (grid_half_x, grid_half_y) = grid_half_extents(band);
+            if cx.abs() + fx > grid_half_x || cy.abs() + fy > grid_half_y {
+                return Err(OpticsError::OutsideField {
+                    half_x: fx,
+                    half_y: fy,
+                    center_x: cx,
+                    center_y: cy,
+                    grid_half_x,
+                    grid_half_y,
+                });
+            }
+        }
+        let lambda = band.lambda();
+        let n = self.material.n_at(lambda, 0.0);
+        if !n.is_finite() || n <= 0.0 {
+            return Err(OpticsError::InvalidMedium {
+                n_front: n,
+                n_back: n,
+            });
+        }
+        let k = 2.0 * PI / lambda;
+        let dn = n - 1.0;
+        let mut out = band.clone();
+        let field = out.field_mut();
+        let (nx, ny) = field.dims();
+        for iy in 0..ny {
+            for ix in 0..nx {
+                let (x, y) = field.coord(ix, iy);
+                let (xr, yr) = (x - cx, y - cy);
+                let (fx, fy) = to_element_frame(xr, yr, psi);
+                let s = field.sample_mut(ix, iy);
+                if !self.aperture.contains(fx, fy) {
+                    *s = Complex64::ZERO;
+                    continue;
+                }
+                let r = fx.hypot(fy);
+                let t = self.thickness_profile(r);
+                if !t.is_finite() {
+                    return Err(OpticsError::InvalidSag { r, sag: t });
+                }
+                *s *= ((k * dn * t) * Complex64::I).exp();
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Ideal **wedge (prism) screen**: two plane surfaces meeting at apex
+/// angle $\alpha$, thickness decreasing along the apex direction
+/// $\hat g$ (mandatory [`Angle`], grating-style):
+///
+/// $$t(\mathbf{r}') = t_0 - \tan\alpha\,(\mathbf{r}' \cdot \hat g),
+///   \qquad \varphi = \frac{2\pi}{\lambda}(n(\lambda)-1)\,t(\mathbf{r}'),$$
+///
+/// a linear phase ramp of gradient $k(n-1)\tan\alpha\,\hat g$. A plane
+/// wave emerging is tilted to direction cosine
+///
+/// $$\sin\theta = -(n - 1)\tan\alpha$$
+///
+/// along $\hat g$ — deflection toward the thick base (the prism law;
+/// exact as a plane-wave tilt on the grid, no small-angle approximation
+/// in the screen itself). Vertex-side piston $k(n-1)t_0$ carried, like
+/// [`ThickLens`]. The clear aperture should keep $t \ge 0$ over the acted
+/// region (caller-side; negative thickness is a phase, not an error).
+///
+/// Kind [`ElementKind::Prism`]; `worst_phase_step` is the ramp bound
+/// $k\,|n-1|\tan\alpha\,\max(|\cos\psi|\Delta x, |\sin\psi|\Delta y)$.
+// No `Clone`/`Debug`/`PartialEq` derives: boxed material closure.
+pub struct Wedge {
+    angle: f64,
+    orientation: Angle,
+    material: Material,
+    base_thickness: f64,
+    aperture: ClearAperture,
+    center: (f64, f64),
+    shape: ElementShape,
+}
+
+impl Wedge {
+    /// Wedge with apex angle `angle` (rad, finite; sign folds into
+    /// `orientation`), glass `material`, base thickness `base_thickness`
+    /// (m, finite and $\ge 0$) at the center, thickness-decreasing
+    /// direction `orientation` (mandatory, from $+x$, CCW about $z$ — the
+    /// grating-vector pattern), clear aperture, and center (m, m).
+    ///
+    /// # Errors
+    /// [`OpticsError::InvalidWedge`] for non-finite angle/base thickness;
+    /// [`OpticsError::InvalidOrientation`]; shared aperture rules.
+    pub fn new(
+        angle: f64,
+        material: Material,
+        base_thickness: f64,
+        orientation: Angle,
+        aperture: ClearAperture,
+        center: (f64, f64),
+    ) -> Result<Self, OpticsError> {
+        if !angle.is_finite() || !base_thickness.is_finite() || base_thickness < 0.0 {
+            return Err(OpticsError::InvalidWedge {
+                angle,
+                base_thickness,
+            });
+        }
+        let orientation = resolve_orientation(Some(orientation))?;
+        aperture.validate(center)?;
+        let shape = aperture.shape();
+        Ok(Self {
+            angle,
+            material,
+            base_thickness,
+            orientation,
+            aperture,
+            center,
+            shape,
+        })
+    }
+
+    /// Apex angle (rad).
+    pub fn angle(&self) -> f64 {
+        self.angle
+    }
+
+    /// Effective orientation of the apex direction $\hat g$ (rad).
+    pub fn orientation(&self) -> Angle {
+        self.orientation
+    }
+
+    /// Thickness (m) at element-frame coordinates `(x, y)`:
+    /// $t_0 - \tan\alpha\,(x\cos\psi + y\sin\psi)$.
+    pub fn thickness_at(&self, x: f64, y: f64) -> f64 {
+        let g = x * self.orientation.cos() + y * self.orientation.sin();
+        self.base_thickness - self.angle.tan() * g
+    }
+
+    /// Expected output direction cosine for a normal-incidence plane wave:
+    /// $\sin\theta = -(n(\lambda)-1)\tan\alpha$ along $\hat g$ (m,
+    /// signed — toward the base).
+    pub fn deflection_sine(&self, lambda: f64) -> f64 {
+        -(self.material.n_at(lambda, 0.0) - 1.0) * self.angle.tan()
+    }
+
+    /// Closed-form worst adjacent-sample phase step (ramp bound, like
+    /// [`BlazedGrating::worst_phase_step`] with $\Phi/\Lambda \to
+    /// (n-1)\tan\alpha$).
+    pub fn worst_phase_step(&self, band: &BandField) -> f64 {
+        let n = self.material.n_at(band.lambda(), 0.0);
+        if !n.is_finite() {
+            return f64::NAN;
+        }
+        let (dx, dy) = band.field().pitch();
+        let ramp = (n - 1.0).abs() * self.angle.tan().abs();
+        let k = 2.0 * PI / band.lambda();
+        k * ramp * ((self.orientation.cos().abs() * dx).max(self.orientation.sin().abs() * dy))
+    }
+}
+
+impl Element for Wedge {
+    fn shape(&self) -> &ElementShape {
+        &self.shape
+    }
+
+    fn kind(&self) -> ElementKind {
+        ElementKind::Prism
+    }
+
+    fn material(&self) -> (&Material, &Material) {
+        (&self.material, &self.material)
+    }
+
+    fn extent(&self) -> Extent {
+        match self.aperture.extent_radius() {
+            Some(r) => Extent::Aperture(r),
+            None => Extent::Unbounded,
+        }
+    }
+
+    /// Paints $\exp\!\big(i k (n-1)(t_0 - \tan\alpha\,\mathbf{r}'\cdot\hat g)\big)$
+    /// inside the stop; zero outside.
+    ///
+    /// # Errors
+    /// [`OpticsError::InvalidMedium`] for bad glass index;
+    /// [`OpticsError::OutsideField`] for oversized footprints.
+    fn apply(&self, band: &BandField) -> Result<BandField, OpticsError> {
+        let (cx, cy) = self.center;
+        let psi = *self.orientation;
+        if let Some((fx, fy)) = self.aperture.footprint_at(psi) {
+            let (grid_half_x, grid_half_y) = grid_half_extents(band);
+            if cx.abs() + fx > grid_half_x || cy.abs() + fy > grid_half_y {
+                return Err(OpticsError::OutsideField {
+                    half_x: fx,
+                    half_y: fy,
+                    center_x: cx,
+                    center_y: cy,
+                    grid_half_x,
+                    grid_half_y,
+                });
+            }
+        }
+        let lambda = band.lambda();
+        let n = self.material.n_at(lambda, 0.0);
+        if !n.is_finite() || n <= 0.0 {
+            return Err(OpticsError::InvalidMedium {
+                n_front: n,
+                n_back: n,
+            });
+        }
+        let k = 2.0 * PI / lambda;
+        let dn = n - 1.0;
+        let mut out = band.clone();
+        let field = out.field_mut();
+        let (nx, ny) = field.dims();
+        for iy in 0..ny {
+            for ix in 0..nx {
+                let (x, y) = field.coord(ix, iy);
+                let (xr, yr) = (x - cx, y - cy);
+                let (fx, fy) = to_element_frame(xr, yr, psi);
+                let s = field.sample_mut(ix, iy);
+                if !self.aperture.contains(fx, fy) {
+                    *s = Complex64::ZERO;
+                    continue;
+                }
+                let t = self.thickness_at(fx, fy);
+                *s *= ((k * dn * t) * Complex64::I).exp();
+            }
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3551,5 +3970,185 @@ mod tests {
         )
         .unwrap();
         assert!(an.worst_phase_step(&band).is_nan());
+    }
+
+    #[test]
+    fn thick_lens_paraxial_matches_thin_lens_with_piston() {
+        // Biconvex R1 = +0.1 (front, bulging toward the beam), R2 = -0.1
+        // (back), n = 1.5: power (n-1)(c1 - c2) = 10 -> f = 0.1 m (Eq. 4.2).
+        // Phase relative to the vertex = thin-lens quadratic (r^4 residual
+        // ~ k*dn*rho^4/4R^3 = 1.6e-3 rad at rho = 1 mm) plus the Eq. 4.17
+        // vertex piston k(n-1)t0.
+        let t0 = 2e-3;
+        let lens = ThickLens::new(
+            SurfaceProfile::Spherical { radius: 0.1 },
+            SurfaceProfile::Spherical { radius: -0.1 },
+            glass(1.5),
+            t0,
+            None,
+            ClearAperture::Circle(2e-2),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let f = lens.focal_at(lambda()).unwrap();
+        assert!((f - 0.1).abs() < 1e-12, "focal {f}");
+        let k = 2.0 * PI / lambda();
+        let band = band_101();
+        let out = lens.apply(&band).unwrap();
+        // Vertex piston exactly Eq. 4.17: dphi = 2 pi (n-1) t / lambda.
+        let center = out.field().sample(50, 50).arg();
+        assert!(
+            wrap(center - (PI / 3.0 + k * 0.5 * t0)).abs() < 1e-9,
+            "piston {}",
+            center
+        );
+        // rho = 2 mm: relative phase matches the INDEPENDENT exact
+        // geometric sag (two spheres: -2*k*dn*(R - sqrt(R^2 - rho^2))) to
+        // 1e-9; the paraxial quadratic differs by the r^4 spherical-
+        // aberration residual (~0.025 rad here, Sec. 4.1.5 magnitude).
+        let rho = 2e-3f64;
+        let s2 = out.field().sample(50, 52);
+        let rel = wrap(s2.arg() - center);
+        let exact = -k * 0.5 * 2.0 * (0.1 - ((0.1f64).powi(2) - rho * rho).sqrt());
+        assert!(
+            wrap(rel - exact).abs() < 1e-9,
+            "exact sag phase {rel} vs {exact}"
+        );
+        let paraxial = -k * rho * rho / (2.0 * f);
+        let sa_residual = wrap(rel - paraxial);
+        assert!(
+            (sa_residual - (-0.025)).abs() < 0.005,
+            "r^4 term {sa_residual}"
+        );
+        // Extent is the reserved Thick variant, first consumer.
+        let el: &dyn Element = &lens;
+        assert!(matches!(el.kind(), ElementKind::Lens));
+        assert!(matches!(
+            el.extent(),
+            Extent::Thick { aperture, thickness }
+                if (aperture - 2e-2).abs() < 1e-18 && (thickness - t0).abs() < 1e-18
+        ));
+        // Thickness profile: t(0) = t0; edge of a biconvex thins.
+        assert!((lens.thickness_profile(0.0) - t0).abs() < 1e-18);
+        assert!(lens.thickness_profile(1e-2) < t0);
+    }
+
+    #[test]
+    fn thick_lens_validation() {
+        let bad_thickness = ThickLens::new(
+            SurfaceProfile::Spherical { radius: 0.1 },
+            SurfaceProfile::Spherical { radius: -0.1 },
+            glass(1.5),
+            -1e-3,
+            None,
+            ClearAperture::Circle(2e-2),
+            (0.0, 0.0),
+        );
+        assert!(matches!(
+            bad_thickness,
+            Err(OpticsError::InvalidThickness { .. })
+        ));
+        // Out-of-domain back surface vs stop.
+        let bad_domain = ThickLens::new(
+            SurfaceProfile::Spherical { radius: 0.1 },
+            SurfaceProfile::Spherical { radius: 1e-3 },
+            glass(1.5),
+            1e-3,
+            None,
+            ClearAperture::Circle(2e-3),
+            (0.0, 0.0),
+        );
+        assert!(matches!(
+            bad_domain,
+            Err(OpticsError::InvalidSurface { .. })
+        ));
+        // Analytic profiles: power/focal undefined, step NaN.
+        let an = ThickLens::new(
+            SurfaceProfile::Analytic(Box::new(|r| r * r)),
+            SurfaceProfile::Spherical { radius: 0.1 },
+            glass(1.5),
+            0.0,
+            None,
+            ClearAperture::Circle(1e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        assert!(an.power_at(lambda()).is_none());
+        assert!(an.focal_at(lambda()).is_none());
+        assert!(an.worst_phase_step(&band_101()).is_nan());
+        // Zero thickness allowed (degenerates to thin-lens profile, no piston).
+        let flat = ThickLens::new(
+            SurfaceProfile::Spherical { radius: 0.1 },
+            SurfaceProfile::Spherical { radius: -0.1 },
+            glass(1.5),
+            0.0,
+            None,
+            ClearAperture::Circle(1e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let out = flat.apply(&band_101()).unwrap();
+        assert!(
+            wrap(out.field().sample(50, 50).arg() - PI / 3.0).abs() < 1e-12,
+            "no piston at t0 = 0"
+        );
+    }
+
+    #[test]
+    fn wedge_ramp_piston_and_deflection_convention() {
+        // alpha = 1 mrad, n = 1.5: thickness gradient tan(alpha) along +g,
+        // phase ramp k(n-1)tan(alpha), deflection sine = -(n-1)tan(alpha)
+        // (toward the base, i.e. -g).
+        let alpha = 1e-3;
+        let t0 = 1e-3;
+        let w = Wedge::new(
+            alpha,
+            glass(1.5),
+            t0,
+            Angle::zero(),
+            ClearAperture::Circle(20e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        assert!((w.thickness_at(0.0, 0.0) - t0).abs() < 1e-18);
+        assert!((w.thickness_at(1.0, 0.0) - (t0 - alpha.tan())).abs() < 1e-18);
+        assert!((w.thickness_at(-1.0, 0.0) - (t0 + alpha.tan())).abs() < 1e-18);
+        assert!((w.deflection_sine(lambda()) + 0.5 * alpha.tan()).abs() < 1e-18);
+        let k = 2.0 * PI / lambda();
+        let band = band_101();
+        let out = w.apply(&band).unwrap();
+        let center = out.field().sample(50, 50).arg();
+        assert!(wrap(center - (PI / 3.0 + k * 0.5 * t0)).abs() < 1e-9);
+        // x = +10 mm: phase drops by k*dn*tan(alpha)*0.01 = 12.566 rad.
+        let right = out.field().sample(60, 50).arg();
+        let expect = center - k * 0.5 * alpha.tan() * 0.01;
+        assert!(wrap(right - expect).abs() < 1e-9);
+        // Taxonomy + guard bound.
+        let el: &dyn Element = &w;
+        assert!(matches!(el.kind(), ElementKind::Prism));
+        let step = w.worst_phase_step(&band);
+        assert!((step - k * 0.5 * alpha.tan() * 1e-3).abs() < 1e-12);
+        assert!(matches!(
+            Wedge::new(
+                f64::NAN,
+                glass(1.5),
+                1e-3,
+                Angle::zero(),
+                ClearAperture::Field,
+                (0.0, 0.0),
+            ),
+            Err(OpticsError::InvalidWedge { .. })
+        ));
+        assert!(matches!(
+            Wedge::new(
+                alpha,
+                glass(1.5),
+                -1e-3,
+                Angle::zero(),
+                ClearAperture::Field,
+                (0.0, 0.0),
+            ),
+            Err(OpticsError::InvalidWedge { .. })
+        ));
     }
 }
