@@ -146,6 +146,27 @@ pub enum OpticsError {
         /// The non-finite orientation value in radians.
         radians: f64,
     },
+    /// The sampled phase grid is structurally invalid: both dimensions
+    /// positive and `values` exactly `nx * ny` entries (row-major).
+    #[error(
+        "sampled phase grid needs nx, ny > 0 and nx * ny values (got dims {nx} x {ny}, len {len})"
+    )]
+    InvalidGrid {
+        /// Declared grid samples along x.
+        nx: usize,
+        /// Declared grid samples along y.
+        ny: usize,
+        /// Actual `values` length.
+        len: usize,
+    },
+    /// The sampled phase grid pitch was not positive and finite (meters).
+    #[error("sampled phase grid needs positive finite pitch (got dx = {dx} m, dy = {dy} m)")]
+    InvalidGridPitch {
+        /// Grid pitch along x in meters.
+        dx: f64,
+        /// Grid pitch along y in meters.
+        dy: f64,
+    },
 }
 
 /// Physical outline of an element's clear aperture.
@@ -1026,11 +1047,79 @@ impl Element for ThinLens {
     }
 }
 
-/// General analytic **phase mask** — the diffractive-optics element
+/// Phase profile of a [`PhaseMask`]: an analytic closure or a sampled
+/// grid (Phase-3 decision D2, delivered Phase 5 task b).
+enum PhaseProfile {
+    /// Analytic closure of element-frame coordinates (m, m) -> radians.
+    Analytic(Box<dyn Fn(f64, f64) -> f64>),
+    /// Sampled profile on a center-origin lattice (bilinear lookup).
+    Sampled(SampledPhase),
+}
+
+/// A phase profile sampled on a **center-origin rectangular lattice** in
+/// the element frame — the same coordinate convention as
+/// [`crate::field::Field`] (physics.md §1): sample $(i, j)$ (row-major,
+/// flat index $j \cdot n_x + i$) sits at element-frame coordinates
+///
+/// $$x'_i = \left(i - \frac{n_x - 1}{2}\right)\Delta x, \qquad
+///   y'_j = \left(j - \frac{n_y - 1}{2}\right)\Delta y .$$
+///
+/// [`PhaseMask::sampled`] wraps one of these; lookup is bilinear between
+/// lattice samples and returns **zero phase** beyond the grid extent
+/// (transparent within the mask's aperture).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SampledPhase {
+    values: Vec<f64>,
+    nx: usize,
+    ny: usize,
+    dx: f64,
+    dy: f64,
+}
+
+impl SampledPhase {
+    /// Bilinear evaluation at element-frame coordinates `(x, y)` (meters,
+    /// center-relative). Outside the lattice span the phase is $0$.
+    pub fn at(&self, x: f64, y: f64) -> f64 {
+        let fx = x / self.dx + (self.nx as f64 - 1.0) / 2.0;
+        let fy = y / self.dy + (self.ny as f64 - 1.0) / 2.0;
+        let last_x = self.nx as f64 - 1.0;
+        let last_y = self.ny as f64 - 1.0;
+        if fx < 0.0 || fx > last_x || fy < 0.0 || fy > last_y {
+            return 0.0;
+        }
+        let i0 = fx.floor() as usize;
+        let j0 = fy.floor() as usize;
+        let i1 = (i0 + 1).min(self.nx - 1);
+        let j1 = (j0 + 1).min(self.ny - 1);
+        let tx = fx - i0 as f64;
+        let ty = fy - j0 as f64;
+        let v = |i: usize, j: usize| self.values[j * self.nx + i];
+        let a = v(i0, j0) + (v(i1, j0) - v(i0, j0)) * tx;
+        let b = v(i0, j1) + (v(i1, j1) - v(i0, j1)) * tx;
+        a + (b - a) * ty
+    }
+
+    /// Grid sample counts `(nx, ny)`.
+    pub fn dims(&self) -> (usize, usize) {
+        (self.nx, self.ny)
+    }
+
+    /// Grid pitch `(dx, dy)` in meters.
+    pub fn pitch(&self) -> (f64, f64) {
+        (self.dx, self.dy)
+    }
+
+    /// Phase samples (radians), row-major, length `nx * ny`.
+    pub fn values(&self) -> &[f64] {
+        &self.values
+    }
+}
+
+/// General **phase mask** — the diffractive-optics element
 /// interface: an arbitrary profile $(x, y) \mapsto \varphi(x, y)$ (radians)
 /// painted onto the sampled plane (approved Phase-3 decision D2: analytic
-/// closure now; the sampled-profile variant arrives with Phase 5, since PSF
-/// export needs grids anyway).
+/// closure via [`PhaseMask::new`], sampled lattice via
+/// [`PhaseMask::sampled`] — Phase 5 task b).
 ///
 /// $$t(x, y) = \begin{cases} e^{i\varphi(x',\; y')} & (x',\, y') \in A \\
 ///   0 & \text{otherwise (when stopped)} \end{cases}
@@ -1064,10 +1153,10 @@ impl Element for ThinLens {
 // No `Clone`/`Debug`/`PartialEq` derives: the phase closure and `Material`
 // hold boxed functions; element identity is by value of its accessors.
 pub struct PhaseMask {
-    phase: Box<dyn Fn(f64, f64) -> f64>, // element-frame (x', y') m -> phase rad
-    orientation: Angle,                  // rad, CCW about z (module docs)
-    aperture: ClearAperture,             // stop geometry, meters from center
-    center: (f64, f64),                  // mask origin, meters, field coordinates
+    profile: PhaseProfile,   // element-frame (x', y') m -> phase rad
+    orientation: Angle,      // rad, CCW about z (module docs)
+    aperture: ClearAperture, // stop geometry, meters from center
+    center: (f64, f64),      // mask origin, meters, field coordinates
     shape: ElementShape,
     material: Material,
 }
@@ -1094,7 +1183,7 @@ impl PhaseMask {
         aperture.validate(center)?;
         let shape = aperture.shape();
         Ok(Self {
-            phase: Box::new(phase),
+            profile: PhaseProfile::Analytic(Box::new(phase)),
             orientation,
             aperture,
             center,
@@ -1104,11 +1193,97 @@ impl PhaseMask {
         })
     }
 
+    /// Phase mask from a **sampled profile** (Phase-3 decision D2,
+    /// Phase 5 task b): `values` (radians, row-major) on a
+    /// `dims = (nx, ny)` center-origin lattice with pitch `pitch` (m),
+    /// interpreted in the element frame exactly like the analytic closure
+    /// of [`PhaseMask::new`] — lookup bilinear, zero phase beyond the grid
+    /// span (transparent within the aperture). Typical sources are
+    /// inverse-design output or measured/mapped DOE profiles; the grid
+    /// should resolve the profile (caller-side Nyquist duty unchanged:
+    /// adjacent-sample phase steps $< \pi$).
+    ///
+    /// # Errors
+    /// [`OpticsError::InvalidOrientation`] for a non-finite `Some` angle;
+    /// [`OpticsError::InvalidGrid`] for zero dims or
+    /// `values.len() != nx * ny`; [`OpticsError::InvalidGridPitch`] for a
+    /// non-positive/non-finite pitch; [`OpticsError::InvalidPhase`] for the
+    /// first non-finite grid value (reported at its lattice position);
+    /// [`OpticsError::InvalidAperture`] / [`OpticsError::InvalidAxis`] for
+    /// the stop as in [`PhaseMask::new`].
+    pub fn sampled(
+        values: Vec<f64>,
+        dims: (usize, usize),
+        pitch: (f64, f64),
+        orientation: Option<Angle>,
+        aperture: ClearAperture,
+        center: (f64, f64),
+    ) -> Result<Self, OpticsError> {
+        let orientation = resolve_orientation(orientation)?;
+        let (nx, ny) = dims;
+        if nx == 0 || ny == 0 || values.len() != nx * ny {
+            return Err(OpticsError::InvalidGrid {
+                nx,
+                ny,
+                len: values.len(),
+            });
+        }
+        let (dx, dy) = pitch;
+        if !dx.is_finite() || dx <= 0.0 || !dy.is_finite() || dy <= 0.0 {
+            return Err(OpticsError::InvalidGridPitch { dx, dy });
+        }
+        // One-time O(N) finiteness scan: the mask stays local, but a
+        // non-finite sample would silently poison every apply.
+        if let Some(k) = values.iter().position(|p| !p.is_finite()) {
+            let (gi, gj) = (k % nx, k / nx);
+            return Err(OpticsError::InvalidPhase {
+                x: (gi as f64 - (nx as f64 - 1.0) / 2.0) * dx,
+                y: (gj as f64 - (ny as f64 - 1.0) / 2.0) * dy,
+                phase: values[k],
+            });
+        }
+        aperture.validate(center)?;
+        let shape = aperture.shape();
+        Ok(Self {
+            profile: PhaseProfile::Sampled(SampledPhase {
+                values,
+                nx,
+                ny,
+                dx,
+                dy,
+            }),
+            orientation,
+            aperture,
+            center,
+            shape,
+            material: Material::new(|_lambda, _angle| 1.0, |_lambda, _angle| 0.0),
+        })
+    }
+
+    /// Profile value (rad) at element-frame coordinates `(x, y)` (m).
+    fn eval(&self, x: f64, y: f64) -> f64 {
+        match &self.profile {
+            PhaseProfile::Analytic(f) => f(x, y),
+            PhaseProfile::Sampled(g) => g.at(x, y),
+        }
+    }
+
     /// Closure probe: phase (rad) at element-frame coordinates `(x, y)`
     /// (m) — center-relative and rotated by $-\psi$. Not validated — use
     /// [`PhaseMask::new`] + `apply` for checked evaluation on the grid.
+    /// For sampled masks this is the bilinear lookup (zero beyond the
+    /// grid span).
     pub fn phase_at(&self, x: f64, y: f64) -> f64 {
-        (self.phase)(x, y)
+        self.eval(x, y)
+    }
+
+    /// The sampled lattice, if this mask was built by [`PhaseMask::sampled`]
+    /// (`None` for the analytic-closure form).
+    pub fn grid(&self) -> Option<&SampledPhase> {
+        match &self.profile {
+            PhaseProfile::Analytic(_) => None,
+            PhaseProfile::Sampled(g) => Some(g),
+        }
     }
 
     /// Effective orientation (rad, CCW about $z$).
@@ -1187,7 +1362,7 @@ impl Element for PhaseMask {
                     *s = Complex64::ZERO;
                     continue;
                 }
-                let phi = (self.phase)(fx, fy);
+                let phi = self.eval(fx, fy);
                 if !phi.is_finite() {
                     return Err(OpticsError::InvalidPhase {
                         x: fx,
@@ -2176,6 +2351,211 @@ mod tests {
             el.extent(),
             Extent::Aperture(r) if (r - 40e-3).abs() < 1e-18
         ));
+    }
+
+    #[test]
+    fn sampled_grid_bilinear_lookup_and_zero_outside() {
+        // 3x3 lattice, pitch 1 mm, values = i + 2j (rad): lattice points
+        // reproduce exactly, midpoints bilinearly, outside the span zero.
+        let values: Vec<f64> = (0..9)
+            .map(|k| (k % 3) as f64 + 2.0 * (k / 3) as f64)
+            .collect();
+        let mask = PhaseMask::sampled(
+            values,
+            (3, 3),
+            (1e-3, 1e-3),
+            None,
+            ClearAperture::Field,
+            (0.0, 0.0),
+        )
+        .unwrap();
+        assert!((mask.phase_at(0.0, 0.0) - 3.0).abs() < 1e-12); // (1,1)
+        assert!((mask.phase_at(1e-3, 0.0) - 4.0).abs() < 1e-12); // (2,1)
+        assert!((mask.phase_at(-1e-3, 1e-3) - 4.0).abs() < 1e-12); // (0,2)
+        // Center of the (0,0)-(1,1) cell: bilinear of 0,1,2,3 -> 1.5.
+        assert!((mask.phase_at(-0.5e-3, -0.5e-3) - 1.5).abs() < 1e-12);
+        // Beyond the outermost samples: zero phase (transparent).
+        assert_eq!(mask.phase_at(2e-3, 0.0), 0.0);
+        assert_eq!(mask.phase_at(0.0, -2e-3), 0.0);
+        // Bilinear is EXACT for a linear profile: sampled ramp == analytic.
+        let ramp: Vec<f64> = (0..9)
+            .map(|k| 2.0 * ((k % 3) as f64 - 1.0) + 3.0 * ((k / 3) as f64 - 1.0))
+            .collect();
+        let sr = PhaseMask::sampled(
+            ramp,
+            (3, 3),
+            (1e-3, 1e-3),
+            None,
+            ClearAperture::Field,
+            (0.0, 0.0),
+        )
+        .unwrap();
+        for (px, py) in [(0.3e-3, -0.7e-3), (-0.1e-3, 0.9e-3), (0.0, 0.0)] {
+            let expect = 2.0 * px / 1e-3 + 3.0 * py / 1e-3;
+            assert!((sr.phase_at(px, py) - expect).abs() < 1e-9, "at {px},{py}");
+        }
+    }
+
+    #[test]
+    fn sampled_mask_apply_identity_stop_and_rotation() {
+        // Constant-pi 2x2 lattice (pitch 20 mm) inside a circle stop on the
+        // 101x101 mm grid: -1 within the span, identity beyond it, zero
+        // beyond the stop.
+        let band = band_101();
+        let pass = band.field().sample(50, 50);
+        let mask = PhaseMask::sampled(
+            vec![std::f64::consts::PI; 4],
+            (2, 2),
+            (20e-3, 20e-3),
+            None,
+            ClearAperture::Circle(30e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let out = mask.apply(&band).unwrap();
+        let f = out.field();
+        // (0, 0) field coords: fx = 0/20mm + 0.5 = 0.5 -> inside span.
+        let s = f.sample(50, 50);
+        assert!((s + pass).norm() < 1e-12, "pi shift failed");
+        // (x = 15 mm, y = 0): fx = 1.25 > last_x = 1 -> outside span but
+        // inside the stop: identity.
+        assert!((f.sample(65, 50) - pass).norm() < 1e-12);
+        // (x = 25 mm, y = 25 mm): beyond the 30 mm stop radius: zero.
+        assert_eq!(f.sample(75, 75), Complex64::ZERO);
+
+        // Rotation: a linear ramp grid with psi = pi/2 equals the unrotated
+        // mask evaluated at the conjugated sample (same element-frame
+        // coordinates -> bit-identical bilinear value).
+        let n = 41usize;
+        let d = 1e-3;
+        let c = n / 2;
+        let small = BandField::uniform(1.0, 0.0, n, n, d, d, lambda()).unwrap();
+        let grid: Vec<f64> = (0..n * n)
+            .map(|k| {
+                let ix = (k % n) as f64 - c as f64;
+                0.3 * ix * d
+            })
+            .collect();
+        let plain = PhaseMask::sampled(
+            grid.clone(),
+            (n, n),
+            (d, d),
+            None,
+            ClearAperture::Field,
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let rot = PhaseMask::sampled(
+            grid,
+            (n, n),
+            (d, d),
+            Some(Angle::new(PI / 2.0)),
+            ClearAperture::Field,
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let po = plain.apply(&small).unwrap();
+        let ro = rot.apply(&small).unwrap();
+        for iy in 0..n {
+            for ix in 0..n {
+                let a = ro.field().sample(ix, iy);
+                let b = po.field().sample(iy, 2 * c - ix);
+                assert!((a - b).norm() < 1e-15, "rotated mismatch at {ix},{iy}");
+            }
+        }
+    }
+
+    #[test]
+    fn sampled_doe_lens_grid_matches_thin_lens() {
+        // The D2 promise: a sampled quadratic (Sec. 4.2.1 DOE lens) agrees
+        // with ThinLens's analytic phase at every lattice point.
+        let f0 = 0.1;
+        let k = 2.0 * PI / lambda();
+        let n = 33usize;
+        let d = 1e-3;
+        let c = (n - 1) / 2;
+        let grid: Vec<f64> = (0..n * n)
+            .map(|idx| {
+                let x = ((idx % n) as f64 - c as f64) * d;
+                let y = ((idx / n) as f64 - c as f64) * d;
+                -k * (x * x + y * y) / (2.0 * f0)
+            })
+            .collect();
+        let mask = PhaseMask::sampled(grid, (n, n), (d, d), None, ClearAperture::Field, (0.0, 0.0))
+            .unwrap();
+        let lens = ThinLens::fixed(f0, None, ClearAperture::Field, (0.0, 0.0)).unwrap();
+        for jy in 0..n {
+            for jx in 0..n {
+                let x = (jx as f64 - c as f64) * d;
+                let y = (jy as f64 - c as f64) * d;
+                let expect = -k * (x * x + y * y) / (2.0 * lens.focal_at(lambda()));
+                let got = mask.phase_at(x, y);
+                let err = (got - expect + PI).rem_euclid(2.0 * PI) - PI;
+                assert!(err.abs() < 1e-9, "lattice ({jx},{jy}) err {err}");
+            }
+        }
+        assert!(mask.grid().is_some());
+    }
+
+    #[test]
+    fn sampled_validation_and_taxonomy() {
+        let o = |v: Vec<f64>, dims: (usize, usize), pitch: (f64, f64)| {
+            PhaseMask::sampled(v, dims, pitch, None, ClearAperture::Field, (0.0, 0.0))
+        };
+        assert!(matches!(
+            o(vec![0.0; 6], (3, 3), (1e-3, 1e-3)),
+            Err(OpticsError::InvalidGrid {
+                nx: 3,
+                ny: 3,
+                len: 6
+            })
+        ));
+        assert!(matches!(
+            o(vec![0.0; 0], (0, 4), (1e-3, 1e-3)),
+            Err(OpticsError::InvalidGrid { nx: 0, .. })
+        ));
+        assert!(matches!(
+            o(vec![0.0; 4], (2, 2), (0.0, 1e-3)),
+            Err(OpticsError::InvalidGridPitch { .. })
+        ));
+        // Non-finite grid value: InvalidPhase at its lattice position.
+        let bad = o(vec![0.0, f64::NAN, 1.0, 1.0], (2, 2), (1e-3, 1e-3));
+        assert!(matches!(
+            bad,
+            Err(OpticsError::InvalidPhase { x, y, .. })
+                if (x - 0.5e-3).abs() < 1e-18 && (y + 0.5e-3).abs() < 1e-18
+        ));
+        assert!(matches!(
+            PhaseMask::sampled(
+                vec![0.0],
+                (1, 1),
+                (1e-3, 1e-3),
+                Some(Angle::new(f64::NAN)),
+                ClearAperture::Field,
+                (0.0, 0.0),
+            ),
+            Err(OpticsError::InvalidOrientation { .. })
+        ));
+        // Analytic form reports no grid; sampled exposes dims/pitch.
+        let a = PhaseMask::new(|_x, _y| 0.0, None, ClearAperture::Field, (0.0, 0.0)).unwrap();
+        assert!(a.grid().is_none());
+        let s = PhaseMask::sampled(
+            vec![0.0; 12],
+            (4, 3),
+            (2e-3, 1e-3),
+            None,
+            ClearAperture::Field,
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let g = s.grid().unwrap();
+        assert_eq!(g.dims(), (4, 3));
+        assert_eq!(g.pitch(), (2e-3, 1e-3));
+        assert_eq!(g.values().len(), 12);
+        // Taxonomy: kind Diffractive, Unbounded extent for Field.
+        let el: &dyn Element = &s;
+        assert!(matches!(el.kind(), ElementKind::Diffractive));
+        assert!(matches!(el.extent(), Extent::Unbounded));
     }
 
     #[test]
