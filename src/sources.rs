@@ -139,6 +139,22 @@ pub enum SourcesError {
         /// The cap ([`MAX_MODE_ORDER`]).
         max: u32,
     },
+    /// The point-source placement was invalid: lateral coordinates must be
+    /// finite and the source-to-plane distance positive and finite
+    /// (meters), or the amplitude non-finite.
+    #[error(
+        "invalid source: position ({x}, {y}) m, distance {distance} m, amplitude {amplitude} (coords finite, distance positive and finite)"
+    )]
+    InvalidSource {
+        /// Source lateral x in meters.
+        x: f64,
+        /// Source lateral y in meters.
+        y: f64,
+        /// Source-to-plane distance in meters.
+        distance: f64,
+        /// Amplitude scale in meters (field is $A / r$).
+        amplitude: f64,
+    },
     /// Grid or wavelength validity is delegated to [`FieldError`] (carried
     /// transparently).
     #[error(transparent)]
@@ -581,6 +597,68 @@ pub fn laguerre_gauss(
             let phi = y.atan2(x);
             let phase = carrier + 0.5 * k * rho2 * inv_r + (beam.l as f64) * phi;
             samples.push(prof * (phase * Complex64::I).exp());
+        }
+    }
+    let field = Field::new(samples, nx, ny, dx, dy)?;
+    Ok(BandField::new(lambda, field)?)
+}
+
+/// Samples the diverging spherical wave of a point source onto an
+/// `nx` x `ny` grid at a plane a distance `distance` downstream of the
+/// source (the PSF input for finite-conjugate systems; the textbook's
+/// Huygens secondary wavelets, Sec. 1.4, made a source):
+///
+/// $$u(x, y) = A\,\frac{e^{\,i k r}}{r}, \qquad
+///   r = \sqrt{(x - x_s)^2 + (y - y_s)^2 + d^2}, \qquad k = \frac{2\pi}{\lambda},$$
+///
+/// exactly the Helmholtz solution of a source at $(x_s, y_c, -d)$ in the
+/// crate's $e^{+ikz}$ frame — diverging, i.e. the **positive** quadratic
+/// curvature near the axis ($k d + k\rho^2/2d + \cdots$), the mirror of the
+/// converging thin lens (`docs/physics.md` §9.2). `amplitude` $A$ carries meter units so
+/// $A/r$ is a field amplitude. ASM/Fresnel propagation of the sampled wave
+/// reproduces the analytic wave at $d + z$ (unit test — the convention pin,
+/// same role as the Gaussian engine cross-check).
+///
+/// # Errors
+/// [`SourcesError::InvalidSource`] for non-finite lateral position,
+/// non-positive/non-finite distance, or non-finite amplitude; then
+/// [`FieldError`] (wrapped) for invalid wavelength/grid.
+#[allow(clippy::too_many_arguments)]
+pub fn spherical(
+    source: (f64, f64),
+    distance: f64,
+    amplitude: f64,
+    lambda: f64,
+    nx: usize,
+    ny: usize,
+    dx: f64,
+    dy: f64,
+) -> Result<BandField, SourcesError> {
+    let (sx, sy) = source;
+    if !sx.is_finite()
+        || !sy.is_finite()
+        || !distance.is_finite()
+        || distance <= 0.0
+        || !amplitude.is_finite()
+    {
+        return Err(SourcesError::InvalidSource {
+            x: sx,
+            y: sy,
+            distance,
+            amplitude,
+        });
+    }
+    if !lambda.is_finite() || lambda <= 0.0 {
+        return Err(FieldError::NonPositiveWavelength(lambda).into());
+    }
+    let k = 2.0 * PI / lambda;
+    let mut samples = Vec::with_capacity(nx.saturating_mul(ny));
+    for iy in 0..ny {
+        let y = (iy as f64 - (ny as f64 - 1.0) / 2.0) * dy - sy;
+        for ix in 0..nx {
+            let x = (ix as f64 - (nx as f64 - 1.0) / 2.0) * dx - sx;
+            let r = (x * x + y * y + distance * distance).sqrt();
+            samples.push(amplitude * ((k * r) * Complex64::I).exp() / r);
         }
     }
     let field = Field::new(samples, nx, ny, dx, dy)?;
@@ -1065,6 +1143,96 @@ mod tests {
         assert!(matches!(
             hermite_gauss(&hg(1e-3, 1, 0), 0.0, -1.0, 8, 8, 1e-4, 1e-4),
             Err(SourcesError::Field(FieldError::NonPositiveWavelength(-1.0)))
+        ));
+    }
+
+    #[test]
+    fn spherical_wave_is_exact_kr_over_r() {
+        // Anchor: u = A e^{ikr}/r at sampled points, and the near-axis
+        // expansion phase = kd + k rho^2/(2d) with POSITIVE curvature
+        // (diverging — the mirror of the converging lens convention).
+        let d0 = 200.0;
+        let a = 1e3;
+        let n = 63usize; // odd: exact origin sample at n/2
+        let dd = 5e-4;
+        let u = spherical((0.0, 0.0), d0, a, LAMBDA, n, n, dd, dd).unwrap();
+        let k = 2.0 * PI / LAMBDA;
+        for (ix, iy) in [(31usize, 31), (0, 62), (10, 45)] {
+            let (x, y) = u.field().coord(ix, iy);
+            let r = (x * x + y * y + d0 * d0).sqrt();
+            let s = u.field().sample(ix, iy);
+            assert!((s.norm() - a / r).abs() / (a / r) < 1e-12);
+            // k*r ~ 2.5e9 rad: f64 argument reduction floors phase
+            // comparisons near 1e-6 absolute.
+            assert!(wrap(s.arg() - k * r).abs() < 1e-5);
+        }
+        let c = u.field().sample(n / 2, n / 2);
+        assert!(wrap(c.arg() - k * d0).abs() < 1e-5);
+        // rho = 2 mm: quadratic term +k rho^2/(2 d0) = 0.126 rad, positive.
+        let off = u.field().sample(n / 2 + 4, n / 2);
+        let rho2 = (4.0 * dd) * (4.0 * dd);
+        let expect = k * d0 + k * rho2 / (2.0 * d0);
+        assert!(wrap(off.arg() - expect).abs() < 1e-3, "diverging sign");
+    }
+
+    #[test]
+    fn spherical_wave_engines_agree_on_axis_advances() {
+        // Cross-engine consistency on the SAME sampled input, restricted to
+        // a distance where BOTH engines are in their sampling regime. The
+        // spherical wave is nonzero at the window edge (hard truncation), so
+        // its spectrum reaches Nyquist; a long Fresnel-TF chirp would then be
+        // undersampled at the edge bins (the TF guard's concern, not physics).
+        // At z = 100 mm the TF chirp step pi*lambda*z*f_nyq^2 ~ 0.016 rad is
+        // well-sampled, and ASM (exact) and Fresnel TF (paraxial) must agree.
+        let n = 63usize;
+        let dd = 5e-4;
+        let d0 = 200.0;
+        let z = 0.1;
+        let src = spherical((0.0, 0.0), d0, 1e3, LAMBDA, n, n, dd, dd).unwrap();
+        let asm_out = asm::propagate(&src, z, &asm::AsmConfig::default()).unwrap();
+        let fr = fresnel::propagate(
+            &src,
+            z,
+            &fresnel::FresnelConfig {
+                padding: 2.0,
+                strict: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let rel = rel_frobenius(&asm_out, &fr);
+        assert!(rel < 1e-3, "ASM vs Fresnel TF on spherical: {rel:e}");
+        // On-axis amplitude is order-preserved (the carrier and curvature
+        // conventions are pinned by the exact-kr test above; the center
+        // PHASE is not a pure kd+kz here because the truncated window holds
+        // ~2 Fresnel zones whose edge contributions shift the axial sum).
+        let c0 = src.field().sample(n / 2, n / 2).norm();
+        let c1 = asm_out.field().sample(n / 2, n / 2).norm();
+        assert!((c1 / c0 - 1.0).abs() < 0.2, "center amplitude preserved");
+    }
+
+    #[test]
+    fn spherical_validation() {
+        let bad = [
+            ((0.0, 0.0), 0.0),
+            ((0.0, 0.0), -1.0),
+            ((0.0, 0.0), f64::NAN),
+            ((f64::INFINITY, 0.0), 1.0),
+            ((0.0, f64::NAN), 1.0),
+        ];
+        for (p, d) in bad {
+            assert!(matches!(
+                spherical(p, d, 1.0, LAMBDA, 8, 8, 1e-4, 1e-4),
+                Err(SourcesError::InvalidSource { .. })
+            ));
+        }
+        assert!(matches!(
+            spherical((0.0, 0.0), 1.0, f64::NAN, LAMBDA, 8, 8, 1e-4, 1e-4),
+            Err(SourcesError::InvalidSource { .. })
+        ));
+        assert!(matches!(
+            spherical((0.0, 0.0), 1.0, 1.0, 0.0, 8, 8, 1e-4, 1e-4),
+            Err(SourcesError::Field(FieldError::NonPositiveWavelength(0.0)))
         ));
     }
 }

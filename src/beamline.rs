@@ -99,6 +99,115 @@ impl<'a> Beamline<'a> {
         }
         Ok(current)
     }
+
+    /// Traces the beamline and returns the detector-plane intensity grid
+    /// $I = |u|^2$ — the coherent PSF when `band` is a point-source
+    /// ([`crate::sources::spherical`]) or tilted-plane-wave
+    /// ([`crate::field::BandField::plane_wave`]) input. Same error taxonomy
+    /// as [`Beamline::trace`].
+    pub fn psf<E>(
+        &self,
+        band: &BandField,
+        propagate: impl FnMut(&BandField, f64) -> Result<BandField, E>,
+    ) -> Result<Psf, BeamlineError<E>>
+    where
+        E: std::error::Error,
+    {
+        let out = self.trace(band, propagate)?;
+        Ok(Psf::from_field(out.field()))
+    }
+}
+
+/// Detector-plane intensity grid produced by [`Beamline::psf`]: real
+/// samples $I = |u|^2$ on the traced output geometry (origin-centered
+/// coordinates like [`crate::field::Field`], physics.md §1).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Psf {
+    samples: Vec<f64>,
+    nx: usize,
+    ny: usize,
+    dx: f64,
+    dy: f64,
+}
+
+impl Psf {
+    /// Intensity samples, row-major.
+    pub fn samples(&self) -> &[f64] {
+        &self.samples
+    }
+
+    /// Sample counts `(nx, ny)`.
+    pub fn dims(&self) -> (usize, usize) {
+        (self.nx, self.ny)
+    }
+
+    /// Sample pitch `(dx, dy)` in meters.
+    pub fn pitch(&self) -> (f64, f64) {
+        (self.dx, self.dy)
+    }
+
+    /// Physical coordinates of sample `(ix, iy)` (meters, origin-centered).
+    pub fn coord(&self, ix: usize, iy: usize) -> (f64, f64) {
+        (
+            (ix as f64 - (self.nx as f64 - 1.0) / 2.0) * self.dx,
+            (iy as f64 - (self.ny as f64 - 1.0) / 2.0) * self.dy,
+        )
+    }
+
+    /// Integrated intensity $\sum I\,\Delta x\,\Delta y$ (the traced
+    /// field's discrete power).
+    pub fn total_power(&self) -> f64 {
+        self.samples.iter().sum::<f64>() * self.dx * self.dy
+    }
+
+    /// Bin of the maximum sample `(ix, iy)`.
+    pub fn peak_bin(&self) -> (usize, usize) {
+        let mut best = (0usize, 0usize);
+        let mut bv = f64::MIN;
+        for (k, &v) in self.samples.iter().enumerate() {
+            if v > bv {
+                bv = v;
+                best = (k % self.nx, k / self.nx);
+            }
+        }
+        best
+    }
+
+    /// Physical position of the peak sample (meters).
+    pub fn peak_position(&self) -> (f64, f64) {
+        let (ix, iy) = self.peak_bin();
+        self.coord(ix, iy)
+    }
+
+    /// Intensity-weighted centroid (meters) — sub-bin peak position for
+    /// well-sampled spots.
+    pub fn centroid(&self) -> (f64, f64) {
+        let (mut sx, mut sy, mut sw) = (0.0f64, 0.0f64, 0.0f64);
+        for (k, &v) in self.samples.iter().enumerate() {
+            let (x, y) = self.coord(k % self.nx, k / self.nx);
+            sx += v * x;
+            sy += v * y;
+            sw += v;
+        }
+        if sw == 0.0 {
+            (0.0, 0.0)
+        } else {
+            (sx / sw, sy / sw)
+        }
+    }
+
+    /// Intensity grid of a traced field.
+    fn from_field(field: &crate::field::Field) -> Self {
+        let (nx, ny) = field.dims();
+        let (dx, dy) = field.pitch();
+        Self {
+            samples: field.samples().iter().map(|s| s.norm_sqr()).collect(),
+            nx,
+            ny,
+            dx,
+            dy,
+        }
+    }
 }
 
 /// Beamline trace failures: element application or engine propagation.
@@ -118,6 +227,7 @@ mod tests {
     use super::*;
     use crate::element::{ClearAperture, EllipticalAperture, RectangularAperture, ThinLens};
     use crate::propagation::asm::{AsmConfig, propagate as asm_propagate};
+    use crate::sources::{GaussianBeam, gaussian};
     use std::cell::Cell;
 
     const LAMBDA: f64 = 500e-9;
@@ -211,5 +321,50 @@ mod tests {
             .trace(&band(), |_b, _z| Err::<BandField, Boom>(Boom))
             .unwrap();
         assert_eq!(out, band());
+    }
+
+    #[test]
+    fn psf_is_traced_intensity_with_geometry() {
+        // Gaussian input (unique central peak; a uniform beam at N_F ~ 300
+        // would put the intensity max in the aperture-edge fringes instead).
+        let beam = GaussianBeam {
+            w0: 1.5e-3,
+            amplitude: 1.0,
+            center: (0.0, 0.0),
+        };
+        let src = gaussian(&beam, 0.0, 500e-9, 64, 64, 1e-3, 1e-3).unwrap();
+        let stop = EllipticalAperture::circle(4e-3, (0.0, 0.0)).unwrap();
+        let mut bl = Beamline::new();
+        bl.push(&stop, 0.1);
+        let cfg = AsmConfig::default();
+        let psf = bl.psf(&src, |b, z| asm_propagate(b, z, &cfg)).unwrap();
+        let traced = bl.trace(&src, |b, z| asm_propagate(b, z, &cfg)).unwrap();
+        // I = |u|^2 sample-for-sample, geometry preserved.
+        assert_eq!(psf.dims(), band().field().dims());
+        assert_eq!(psf.pitch(), band().field().pitch());
+        for (i, s) in traced.field().samples().iter().enumerate() {
+            assert!((psf.samples()[i] - s.norm_sqr()).abs() <= s.norm_sqr() * 1e-15 + 1e-30);
+        }
+        // Power bookkeeping: Psf total_power == traced field power.
+        let rel = (psf.total_power() - traced.field().power()).abs() / traced.field().power();
+        assert!(rel < 1e-12);
+        // Gaussian through a generous stop: peak at the origin bin-pair
+        // (even grid: nearest sample is half a pitch off-axis), centroid
+        // at origin by symmetry.
+        let (px, py) = psf.peak_position();
+        assert!(px.abs() <= 0.6e-3 && py.abs() <= 0.6e-3, "peak {px},{py}");
+        let (cx, cy) = psf.centroid();
+        assert!(cx.abs() < 1e-6 && cy.abs() < 1e-6, "centroid {cx},{cy}");
+        let (x00, y00) = psf.coord(0, 0);
+        assert!((x00 + 31.5e-3).abs() < 1e-15 && (y00 + 31.5e-3).abs() < 1e-15);
+        // Zero field: centroid safely at origin.
+        let empty = Psf {
+            samples: vec![0.0; 4],
+            nx: 2,
+            ny: 2,
+            dx: 1.0,
+            dy: 1.0,
+        };
+        assert_eq!(empty.centroid(), (0.0, 0.0));
     }
 }
