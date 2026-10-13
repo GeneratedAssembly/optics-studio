@@ -7,6 +7,8 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-13
+
 Phase 5: sources & output — Hermite-Gauss and Laguerre-Gauss mode
 initializers, the point-source spherical wave, the sampled-`PhaseMask`
 variant (D2 delivered), and `beamline` composition sugar with PSF

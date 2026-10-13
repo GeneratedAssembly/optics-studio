@@ -355,8 +355,8 @@ one propagation-level type is a later API decision.
   delivered as the validation truth, keeping the lib minimal); regime
   ladder unchanged (RS outside the recommendation — cross-validation
   engine).
-- **Phase 5** (sources & output) — **implemented (tasks a–d), release
-  decision pending**: HG/LG mode initializers (orthonormal, $N \le 64$)
+- **Phase 5** (sources & output) — **complete, released as 0.5.0**:
+  HG/LG mode initializers (orthonormal, $N \le 64$)
   and `spherical` point source in `sources`; sampled-`PhaseMask` variant
   (D2 delivered — bilinear element-frame lattice); `beamline` composition
   sugar (`Beamline`/`trace`/`psf`/`Psf`, caller-supplied engine closure —
