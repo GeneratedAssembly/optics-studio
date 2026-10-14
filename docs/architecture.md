@@ -389,8 +389,8 @@ one propagation-level type is a later API decision.
   visualization/export backend (front-end project — the library stays
   headless); the reserved `fft.rs` shift helpers were removed (no
   consumer ever materialized).
-- **Phase 6** (element library expansion — thick elements) — **implemented
-  (tasks a–d), release decision pending**: `RefractiveSurface` with
+- **Phase 6** (element library expansion — thick elements) — **complete,
+  released as 0.6.0**: `RefractiveSurface` with
   `SurfaceProfile` (Zemax standard-surface sag: sphere/conic/even-asphere/
   analytic), medium-aware ASM (`AsmConfig::medium`, $\lambda_n$
   substitution), `Beamline` per-step media (`push_medium`, `gap`) — the

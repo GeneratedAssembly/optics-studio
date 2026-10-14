@@ -7,6 +7,8 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-14
+
 Phase 6: thick elements — `RefractiveSurface` with Zemax standard-surface
 sag profiles (sphere/conic/even-asphere/analytic), medium-aware ASM
 (`AsmConfig::medium`), `Beamline` per-step media (`push_medium`, `gap`)
