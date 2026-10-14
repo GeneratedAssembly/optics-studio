@@ -21,6 +21,9 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 - Repository is now a cargo workspace: root package `optics-core` +
   `crates/optics-zemax` (path dependency). No `git mv`, history intact.
+- New workspace member `crates/optics-inverse` (`optics-inverse` 0.1.0,
+  scaffold): `InverseError` + crate docs; Phase-9 tasks per
+  `tasks/todo.md` follow.
 
 ### New crate: optics-zemax 0.1.0 (Phase 8)
 

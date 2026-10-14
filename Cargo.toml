@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/optics-zemax"]
+members = ["crates/optics-zemax", "crates/optics-inverse"]
 
 [package]
 name = "optics-core"

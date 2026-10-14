@@ -113,7 +113,7 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
 
 ### Milestone A — framework + solvers (optics-inverse 0.1.0)
 
-- [ ] **9.1 Crate scaffold** — `crates/optics-inverse` (package
+- [x] **9.1 Crate scaffold** — `crates/optics-inverse` (package
   `optics-inverse`), workspace member, path-dep `optics-core`, `rand`
   (0.8, default-features minimal); `InverseError` (thiserror) in `error.rs`;
   lib.rs module skeleton + crate docs. Acceptance: `cargo test --workspace`
