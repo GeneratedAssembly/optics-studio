@@ -123,7 +123,7 @@ impl AgfCatalog {
                     let nd_i = rest.iter().position(|v| (1.3..2.5).contains(v));
                     let nd_encoded = rest
                         .iter()
-                        .find(|v| (3.0e5..2.0e6).contains(v))
+                        .find(|v| (3.0e5..2.0e6).contains(*v))
                         .map(|v| 1.0 + v * 1e-6);
                     let (nd, vd) = match nd_i {
                         Some(i) if rest.len() > i + 1 => (rest[i], rest[i + 1]),
