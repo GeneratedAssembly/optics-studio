@@ -9,6 +9,17 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- `optics-inverse`: `fd` — central-difference gradients over `Params`
+  (2·dim renders per step; steps are each slot's `fd_step`, defaulting to
+  1e-4 of the bound span) and `Solver::Adam`: Adam descent with
+  gradient-norm clipping and best-epoch snapshot, bound-clamped probes
+  (one-sided slope at bounds), deterministic by default; for this variant
+  `StochasticConfig::budget` counts epochs (`2·dim + 1` evaluations each)
+  and `Solution::history` records one merit value per epoch like the 9.6
+  solvers. Golden: bend one curvature of the imported ACA254-100-UV
+  doublet to minimize spot RMS — the zemax→inverse loop, with
+  `optics-zemax` as a dev-dependency only (public API unchanged).
+  (Phase-9 task 9.7.)
 - `optics-inverse`: `gs` — Gerchberg–Saxton phase retrieval / DOE design
   (textbook §5.5): a phase-only `GridPhase` carrier between input and
   target planes relayed by two ASM half-transforms, with energy
@@ -76,6 +87,13 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 - New workspace member `crates/optics-inverse` (`optics-inverse` 0.1.0,
   scaffold): `InverseError` + crate docs; Phase-9 tasks per
   `tasks/todo.md` follow.
+
+### Fixed
+
+- `optics-zemax`: `agf` NM-line nd/Vd scan compiles on rustc ≥ 1.98
+  (`Range::contains` received the `find` closure's `&&f64`; deref to
+  `&f64`). Build-only — no behaviour change; surfaced when
+  `optics-inverse` gained the `optics-zemax` dev-dependency (task 9.7).
 
 ### New crate: optics-zemax 0.1.0 (Phase 8)
 

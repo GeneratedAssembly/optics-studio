@@ -10,3 +10,8 @@ optics-core = { path = "../.." }
 thiserror = "2"
 rand = "0.8"
 num-complex = "0.4.6"
+
+[dev-dependencies]
+# Task 9.7 golden only: the zemax -> inverse loop test imports a real
+# prescription. NOT a public dependency of the crate API.
+optics-zemax = { path = "../optics-zemax" }

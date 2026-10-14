@@ -163,7 +163,7 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   module docs). Golden: 1-param focus flattening (tune gap, maximize
   EE-in-radius), 2-param doublet curvatures. Scope: M. Deps: 9.5.
 
-- [ ] **9.7 FD gradients + Adam** — central differences over `Params`
+- [x] **9.7 FD gradients + Adam** — central differences over `Params`
   (2·dim renders), Adam w/ norm-clip + best-epoch snapshot (notebook
   discipline). Golden: adjust one curvature of the imported ACA254 doublet
   to minimize spot RMS — proves zemax→inverse loop (dev-dep optics-zemax).

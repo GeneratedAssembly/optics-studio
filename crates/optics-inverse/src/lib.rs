@@ -35,6 +35,7 @@
 
 pub mod carrier;
 pub mod error;
+pub mod fd;
 pub mod gs;
 pub mod merit;
 pub mod observe;
@@ -43,6 +44,7 @@ pub mod solve;
 
 pub use carrier::{AnalyticBuilder, Carrier, Design, GridGeom, GridSpec, Step};
 pub use error::InverseError;
+pub use fd::{AdamConfig, gradient};
 pub use gs::{GsConfig, GsInit, GsProblem, GsRecord, GsSolution, GsVariant};
 pub use merit::{
     EncircledEnergyMerit, Merit, MseToTarget, MtfMerit, Selector, SpotRmsMerit, StrehlMerit,

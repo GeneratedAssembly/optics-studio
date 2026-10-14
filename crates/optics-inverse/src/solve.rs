@@ -1,7 +1,15 @@
-//! Derivative-free solvers: random search with adaptive step, and
-//! simulated annealing. These need only scalar merit evaluations (any user
-//! merit, including CRLB-class ones, works out of the box), so they are the
-//! baseline every design problem can at least be attacked with.
+//! Solvers over the bounded design space: derivative-free search (random
+//! search with adaptive step, simulated annealing) plus the gradient path
+//! ([`Solver::Adam`], task 9.7). The derivative-free solvers need only
+//! scalar merit evaluations (any user merit, including CRLB-class ones,
+//! works out of the box), so they are the baseline every design problem
+//! can at least be attacked with.
+//!
+//! [`Solver::Adam`] (implemented in [`crate::fd`]) adds the gradient path:
+//! central differences over `Params` + Adam descent with gradient-norm
+//! clipping and a best-epoch snapshot. For that variant `budget` counts
+//! **epochs** (each epoch costs `2·dim + 1` objective evaluations) and the
+//! search is deterministic unless `random_init` is requested.
 //!
 //! All solvers consume an **objective** `Fn(&[f64]) -> Result<f64>` (see
 //! [`crate::merit::objective`]) plus a [`Params`] design space, and return
@@ -70,7 +78,7 @@ pub(crate) fn clamp_into(params: &Params, v: &mut [f64]) {
 }
 
 /// Initial vector: current values, or a uniform random draw when asked.
-fn start(params: &Params, random_init: bool, rng: &mut StdRng) -> Vec<f64> {
+pub(crate) fn start(params: &Params, random_init: bool, rng: &mut StdRng) -> Vec<f64> {
     if !random_init {
         return params.values();
     }
@@ -102,6 +110,11 @@ pub enum Solver {
         /// Final temperature (as a fraction of `t0`).
         t_end_frac: f64,
     },
+    /// Central-difference gradients over `Params` + Adam descent with
+    /// gradient-norm clipping and best-epoch snapshot (see [`crate::fd`]).
+    /// `budget` counts epochs; the run is deterministic unless
+    /// `random_init` uses `seed`.
+    Adam(crate::fd::AdamConfig),
 }
 
 impl Default for Solver {
@@ -113,7 +126,7 @@ impl Default for Solver {
     }
 }
 
-/// Run a derivative-free solver over `params` minimizing `objective`.
+/// Run a solver over `params` minimizing `objective`.
 ///
 /// `objective` receives already-clamped vectors. `random_init` starts from
 /// a uniform draw in the bounds rather than the current values.
@@ -152,6 +165,14 @@ pub fn solve(
             random_init,
             t0,
             t_end_frac,
+            &mut rng,
+        ),
+        Solver::Adam(adam_cfg) => crate::fd::adam(
+            params,
+            objective,
+            &adam_cfg,
+            cfg.budget,
+            random_init,
             &mut rng,
         ),
     }
