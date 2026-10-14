@@ -176,7 +176,7 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   monotone), GS recovers a known phase-only lens. Scope: M. Deps: 9.4
   (9.5 for stop test).
 
-- [ ] **9.9 Adjoint gradients (ADR first)** — key fact: the adjoint of ASM
+- [x] **9.9 Adjoint gradients (ADR first)** — key fact: the adjoint of ASM
   propagation is propagation by −z (conjugate transfer function), of a
   thin element is pointwise conjugate multiply, of an aperture is masked
   multiply ⇒ adjoint = forward primitives in reverse order, NO autodiff

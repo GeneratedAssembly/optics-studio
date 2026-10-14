@@ -9,6 +9,24 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- `optics-inverse`: `adjoint` — reverse-mode (adjoint) grid gradients, ADR
+  first (`docs/adr-9.9-adjoint-gradients.md` records the math): the ASM
+  adjoint is propagation by −z with the same config (exact under the pinned
+  FFT convention — `asm_adjoint_inner_product_identity`), the thin-element
+  adjoint is conjugate transmission recovered by probing `apply` on a unit
+  field, and the aperture is a self-adjoint 0/1 mask — so `dM/dgrid` costs
+  one forward render + one adjoint run per observation frame with no
+  autodiff graph (`asm_adjoint`, `transmission`, `push_back`,
+  `grid_gradient`). Acceptance: adjoint grid gradient matches FD on a
+  coarse grid (global relative error < 1e-4, test
+  `grid_gradient_matches_fd_on_coarse_grid`), and the GS phase error
+  signal is the negative adjoint gradient of the Eq. 5.18 amplitude MSE,
+  preconditioned by the illumination intensity (∇φM = −(2/N)A²⊙Δφ to
+  first order — correlation > 0.9 pinned by
+  `gs_phase_error_is_adjoint_mse_negative_gradient`).
+  Merits without `obs_gradient` and non-intensity seed channels surface as
+  the new `InverseError::Adjoint` (FD-on-observation remains the fallback).
+  New `Design::elements()`/`Design::steps()` accessors. (Phase-9 task 9.9.)
 - `optics-inverse`: `fd` — central-difference gradients over `Params`
   (2·dim renders per step; steps are each slot's `fd_step`, defaulting to
   1e-4 of the bound span) and `Solver::Adam`: Adam descent with

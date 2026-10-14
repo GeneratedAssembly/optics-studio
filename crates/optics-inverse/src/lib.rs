@@ -33,6 +33,7 @@
 //! never see design structure. All validation surfaces as
 //! `InverseError` at apply time — never a panic.
 
+pub mod adjoint;
 pub mod carrier;
 pub mod error;
 pub mod fd;
@@ -42,6 +43,7 @@ pub mod observe;
 pub mod params;
 pub mod solve;
 
+pub use adjoint::{PlaneGradient, asm_adjoint, grid_gradient, push_back, transmission};
 pub use carrier::{AnalyticBuilder, Carrier, Design, GridGeom, GridSpec, Step};
 pub use error::InverseError;
 pub use fd::{AdamConfig, gradient};

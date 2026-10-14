@@ -49,4 +49,12 @@ pub enum InverseError {
         /// Human-readable cause from the propagation layer.
         reason: String,
     },
+    /// The adjoint gradient pass (task 9.9) could not run: the merit has no
+    /// `obs_gradient`, the seed touches a channel without an adjoint path,
+    /// or a backward propagation/apply failed.
+    #[error("adjoint gradient failed: {reason}")]
+    Adjoint {
+        /// Human-readable cause.
+        reason: String,
+    },
 }

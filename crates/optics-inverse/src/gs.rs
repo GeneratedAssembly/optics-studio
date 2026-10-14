@@ -293,9 +293,11 @@ pub struct GsSolution {
     /// Final-pass error signal at the target plane: $|U_t| - T$.
     pub target_amplitude_error: Vec<f64>,
     /// Final-pass error signal at the DOE plane: the wrapped phase
-    /// residual $\Delta\varphi$ that drove the last update (the negative
-    /// gradient direction of the Eq. 5.18 MSE — task 9.9 pins the exact
-    /// adjoint relation).
+    /// residual $\Delta\varphi$ that drove the last update — the negative
+    /// gradient direction of the Eq. 5.18 amplitude MSE, preconditioned by
+    /// the illumination intensity: $\nabla_\varphi M = -\frac{2}{N} A^2
+    /// \odot \Delta\varphi$ to first order (pinned by ADR-9.9 and
+    /// `adjoint::gs_phase_error_is_adjoint_mse_negative_gradient`).
     pub phase_error: Vec<f64>,
     /// Illumination amplitude $A$ arriving at the DOE plane (the DOE-plane
     /// energy constraint used by every projection).

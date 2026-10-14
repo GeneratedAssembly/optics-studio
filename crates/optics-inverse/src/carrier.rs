@@ -94,6 +94,21 @@ impl Design {
         self.steps.is_empty()
     }
 
+    /// The owned element stack, in beamline order. Exposed for the adjoint
+    /// pass (task 9.9), which walks the same steps in reverse and probes
+    /// each thin element's pointwise transmission; a [`Beamline`] borrow
+    /// cannot be iterated.
+    pub fn elements(&self) -> &[Box<dyn Element>] {
+        &self.elements
+    }
+
+    /// The step list (element index / gap, `z_after`, medium), in beamline
+    /// order — the exact sequence [`Beamline`] will run. See
+    /// [`Design::elements`] for why the adjoint needs this.
+    pub fn steps(&self) -> &[Step] {
+        &self.steps
+    }
+
     /// Borrow this design as a [`Beamline`] (elements stay owned here).
     pub fn beamline(&self) -> Beamline<'_> {
         let mut bl = Beamline::new();
