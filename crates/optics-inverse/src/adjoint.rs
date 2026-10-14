@@ -230,8 +230,8 @@ pub fn push_back(
                 g[p] += -2.0 * (mu[p].conj() * step.v_after[p]).im;
             }
             // Apply T†: co = conj(t) ⊙ μ.
-            for p in 0..n {
-                co_samples[p] *= step.t[p].conj();
+            for (c, t) in co_samples.iter_mut().zip(&step.t) {
+                *c *= t.conj();
             }
         }
     }
@@ -516,7 +516,7 @@ mod tests {
         });
         renderer.asm = asm_plain();
 
-        let objective = |v: &[f64]| -> Result<f64> { Ok(merit.evaluate(&renderer.render(v)?)?) };
+        let objective = |v: &[f64]| -> Result<f64> { merit.evaluate(&renderer.render(v)?) };
         let (g_fd, _) = fd::gradient(carrier.params(), &objective, &values).unwrap();
 
         let planes = grid_gradient(&renderer, &values, &merit).unwrap();

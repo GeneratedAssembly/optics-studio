@@ -448,7 +448,7 @@ pub fn run(problem: &GsProblem) -> Result<GsSolution> {
         GsInit::Zero => problem.carrier.params().values(),
         GsInit::Random { seed } => {
             let mut rng = StdRng::seed_from_u64(*seed);
-            let span = (hi - lo).min(TAU).max(0.0);
+            let span = (hi - lo).clamp(0.0, TAU);
             if span > 0.0 {
                 let u = Uniform::new(0.0, span);
                 (0..n).map(|_| lo + u.sample(&mut rng)).collect()
@@ -765,7 +765,7 @@ mod tests {
         // Full-depth DOE: span ≥ 2π wraps modulo 2π.
         for &p in &[PI, 3.0 * PI, -PI - 0.5, 7.0] {
             let e = encode_bounds(p, -PI, PI);
-            assert!(e >= -PI && e < PI, "{p} -> {e}");
+            assert!((-PI..PI).contains(&e), "{p} -> {e}");
             assert!(wrap_pi(e - p).abs() < 1e-12, "{p} -> {e} not congruent");
         }
         // Limited-depth DOE: span < 2π clamps (fabrication constraint).

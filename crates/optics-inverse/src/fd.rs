@@ -159,7 +159,7 @@ pub fn gradient(
         let fd = objective(&dn)?;
         evaluations += 2;
         let d = up[i] - dn[i];
-        if !(d > 0.0) {
+        if d <= 0.0 || d.is_nan() {
             return Err(InverseError::Render {
                 reason: format!(
                     "fd step for slot {} collapses to zero separation (step {})",

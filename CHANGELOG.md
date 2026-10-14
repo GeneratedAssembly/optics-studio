@@ -51,6 +51,14 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- `optics-inverse`: cleared six clippy-1.98 lints (`needless_range_loop`,
+  `Ok(…?)` redundant wrap, `neg_cmp_op_on_partial_ord`, `manual_clamp`,
+  `manual_range_contains`, identity-op in a test) that had begun failing the
+  workspace `cargo clippy -q --all-targets -- -D warnings` gate after the
+  toolchain bump. Behavior-preserving; the crate's tests are unchanged and
+  green. Recorded separately from task 10.2 — the `optics-studio` crate is
+  new and touches no solver code — but committed first so the aggregate
+  gate is green for the feature commit.
 - `optics-zemax`: `agf` NM-line nd/Vd scan compiles on rustc ≥ 1.98
   (`Range::contains` received the `find` closure's `&&f64`; deref to
   `&f64`). Build-only — no behaviour change; surfaced when

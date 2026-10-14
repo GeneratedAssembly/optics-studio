@@ -176,7 +176,9 @@ fn adam_bends_aca254_curvature_to_minimize_spot_rms() {
     // of the raw per-epoch trace (Adam's raw values may rise between
     // epochs — best-so-far is monotone by construction).
     assert_eq!(sol.history.len(), 21);
-    assert_eq!(sol.evaluations, 1 + 20 * (2 * 1 + 1));
+    // 1 initial evaluation + 20 epochs x (2 central-difference evaluations
+    // for the single parameter + 1 best-check).
+    assert_eq!(sol.evaluations, 1 + 20 * (2 + 1));
     let trace_min = sol.history.iter().fold(f64::INFINITY, |a, &b| a.min(b));
     assert!(
         (sol.value - trace_min).abs() <= 1e-12 * trace_min.abs().max(1.0),
