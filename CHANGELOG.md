@@ -25,6 +25,13 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   ∂I/∂x₀, ∂I/∂y₀, ∂I/∂λ (the Fisher/CRLB input). Goldens: defocus/mask/
   defocus piston identity, A(+z)∘A(−z) round-trip, ∂I/∂x₀ = −∂I/∂x
   translation invariance, chromatic-focus λ-channel. (Phase-9 task 9.4.)
+- `optics-inverse`: `Merit` trait (`evaluate` + `obs_gradient` adjoint
+  seam) with built-ins `MseToTarget`, `EncircledEnergyMerit`,
+  `SpotRmsMerit`, `StrehlMerit`, `MtfMerit` over a `Selector`
+  (channel × band × scene, aggregation supported), plus `objective()`
+  composing renderer+merit for solvers. Built-in values match core
+  `analysis` on golden PSFs; analytic gradients FD-verified. (Phase-9
+  task 9.5.)
 - `Material::sellmeier_book1(constant, terms)` (core): generalized Book-1
   form $n^2 = C_0 + \sum B\lambda^2/(\lambda^2 - C)$ — required by the
   H.H. Li (1980) CaF2 parameterization; `sellmeier` is the $C_0 = 1$ case.

@@ -35,11 +35,16 @@
 
 pub mod carrier;
 pub mod error;
+pub mod merit;
 pub mod observe;
 pub mod params;
 
 pub use carrier::{Carrier, Design, Step};
 pub use error::InverseError;
+pub use merit::{
+    EncircledEnergyMerit, Merit, MseToTarget, MtfMerit, Selector, SpotRmsMerit, StrehlMerit,
+    objective,
+};
 pub use observe::{Channel, Derivatives, Observation, Renderer};
 pub use params::{Param, Params};
 

@@ -143,7 +143,7 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   reproduces pure-piston collimation; Gaussian-PSF ∂x channel matches
   analytic derivative < 1e-3 rel. Scope: M. Deps: 9.3.
 
-- [ ] **9.5 Merit trait + simple built-in FOMs** — `Merit {
+- [x] **9.5 Merit trait + simple built-in FOMs** — `Merit {
   evaluate(&Observation) -> f64; obs_gradient(&Observation) ->
   Option<Vec<f64>> }` (None ⇒ FD-on-obs fallback; the seam decision 7's
   frontend will implement). Built-ins: MSE-to-target, EE-in-radius,
