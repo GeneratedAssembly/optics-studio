@@ -46,7 +46,7 @@ engine supplied as a closure so per-engine configs and errors stay open.
 |---|---|---|
 | `common` | Angle newtype (radians, derefs to f64), `J` imaginary unit | `Angle`, `J` |
 | `wave` | Scalar source/beam parameter records (pre-sampling) | `Wavelength`, `Polarization`, `Wave` |
-| `field` | Complex sample grids; wavelength decoupled from geometry | `Field`, `BandField`, `FieldError` |
+| `field` | Complex sample grids + real intensity grids; wavelength decoupled from geometry | `Field`, `BandField`, `Psf`, `sum_intensity`, `FieldError` |
 | `element` | Local field transformations; element taxonomy | `Element` trait, `EllipticalAperture`, `RectangularAperture`, `ThinLens`, `PhaseMask`, `SampledPhase`, `BlazedGrating`, `RefractiveSurface`, `SurfaceProfile`, `ThickLens`, `Wedge`, `ClearAperture`, `OpticsError`, `ElementShape`, `ElementKind`, `Extent`, `Material` |
 | `sources` | Closed-form field initializers → `BandField` | `GaussianBeam`, `gaussian`, `HermiteGaussBeam`, `hermite_gauss`, `LaguerreGaussBeam`, `laguerre_gauss`, `spherical`, `MAX_MODE_ORDER`, `SourcesError` |
 | `propagation` | Wave-optics engines + regime diagnostics | `asm`, `fresnel`, `fraunhofer`, `rayleigh_sommerfeld`, `regime` (public); `fft` (private) |
@@ -254,9 +254,11 @@ $E$: `std::error::Error`); zero spacings skip the engine call entirely.
 refractive indices so thick lenses compose surface → glass → surface.
 A closure rather than an engine enum: per-engine configs differ and the
 engine-error unification remains an open decision — the beamline API is
-stable as engines are added. `psf(&band, closure)` returns `Psf`: the
-detector-plane intensity grid $I = |u|^2$ with `coord`, `total_power`,
-`peak_bin`/`peak_position`, and `centroid` (sub-bin spot position).
+stable as engines are added. `psf(&band, closure)` returns `Psf` (data type living in
+`field`, re-exported here): the detector-plane intensity grid $I = |u|^2$
+with `coord`, `total_power`, `peak_bin`/`peak_position`, and `centroid`
+(sub-bin spot position); `field::sum_intensity` folds incoherent bands
+into the same type.
 Elements stay caller-owned borrows; the beamline never picks an engine,
 guards, or resamples — `regime` stays the diagnostics authority.
 `BeamlineError<E>` = `Element(OpticsError)` | `Engine(E)` (untouched).

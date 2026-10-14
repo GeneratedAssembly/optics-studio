@@ -42,6 +42,8 @@ use thiserror::Error;
 use crate::element::{Element, OpticsError};
 use crate::field::BandField;
 
+pub use crate::field::Psf;
+
 /// An ordered sequence of `(element, z_after, medium)` steps over borrowed
 /// elements. The beamline is a transient composition: elements stay
 /// caller-owned (`&'a dyn Element`), and building or pushing never copies
@@ -138,99 +140,7 @@ impl<'a> Beamline<'a> {
         E: std::error::Error,
     {
         let out = self.trace(band, propagate)?;
-        Ok(Psf::from_field(out.field()))
-    }
-}
-
-/// Detector-plane intensity grid produced by [`Beamline::psf`]: real
-/// samples $I = |u|^2$ on the traced output geometry (origin-centered
-/// coordinates like [`crate::field::Field`], physics.md §1).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Psf {
-    samples: Vec<f64>,
-    nx: usize,
-    ny: usize,
-    dx: f64,
-    dy: f64,
-}
-
-impl Psf {
-    /// Intensity samples, row-major.
-    pub fn samples(&self) -> &[f64] {
-        &self.samples
-    }
-
-    /// Sample counts `(nx, ny)`.
-    pub fn dims(&self) -> (usize, usize) {
-        (self.nx, self.ny)
-    }
-
-    /// Sample pitch `(dx, dy)` in meters.
-    pub fn pitch(&self) -> (f64, f64) {
-        (self.dx, self.dy)
-    }
-
-    /// Physical coordinates of sample `(ix, iy)` (meters, origin-centered).
-    pub fn coord(&self, ix: usize, iy: usize) -> (f64, f64) {
-        (
-            (ix as f64 - (self.nx as f64 - 1.0) / 2.0) * self.dx,
-            (iy as f64 - (self.ny as f64 - 1.0) / 2.0) * self.dy,
-        )
-    }
-
-    /// Integrated intensity $\sum I\,\Delta x\,\Delta y$ (the traced
-    /// field's discrete power).
-    pub fn total_power(&self) -> f64 {
-        self.samples.iter().sum::<f64>() * self.dx * self.dy
-    }
-
-    /// Bin of the maximum sample `(ix, iy)`.
-    pub fn peak_bin(&self) -> (usize, usize) {
-        let mut best = (0usize, 0usize);
-        let mut bv = f64::MIN;
-        for (k, &v) in self.samples.iter().enumerate() {
-            if v > bv {
-                bv = v;
-                best = (k % self.nx, k / self.nx);
-            }
-        }
-        best
-    }
-
-    /// Physical position of the peak sample (meters).
-    pub fn peak_position(&self) -> (f64, f64) {
-        let (ix, iy) = self.peak_bin();
-        self.coord(ix, iy)
-    }
-
-    /// Intensity-weighted centroid (meters) — sub-bin peak position for
-    /// well-sampled spots.
-    pub fn centroid(&self) -> (f64, f64) {
-        let (mut sx, mut sy, mut sw) = (0.0f64, 0.0f64, 0.0f64);
-        for (k, &v) in self.samples.iter().enumerate() {
-            let (x, y) = self.coord(k % self.nx, k / self.nx);
-            sx += v * x;
-            sy += v * y;
-            sw += v;
-        }
-        if sw == 0.0 {
-            (0.0, 0.0)
-        } else {
-            (sx / sw, sy / sw)
-        }
-    }
-
-    /// Intensity grid of a traced field.
-    fn from_field(field: &crate::field::Field) -> Self {
-        let (nx, ny) = field.dims();
-        let (dx, dy) = field.pitch();
-        Self {
-            samples: field.samples().iter().map(|s| s.norm_sqr()).collect(),
-            nx,
-            ny,
-            dx,
-            dy,
-        }
+        Ok(Psf::from_band(&out))
     }
 }
 
@@ -390,13 +300,7 @@ mod tests {
         let (x00, y00) = psf.coord(0, 0);
         assert!((x00 + 31.5e-3).abs() < 1e-15 && (y00 + 31.5e-3).abs() < 1e-15);
         // Zero field: centroid safely at origin.
-        let empty = Psf {
-            samples: vec![0.0; 4],
-            nx: 2,
-            ny: 2,
-            dx: 1.0,
-            dy: 1.0,
-        };
+        let empty = Psf::new(vec![0.0; 4], 2, 2, 1.0, 1.0).unwrap();
         assert_eq!(empty.centroid(), (0.0, 0.0));
     }
 

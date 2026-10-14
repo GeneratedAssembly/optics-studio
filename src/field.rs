@@ -11,7 +11,7 @@
 //!   because phase effects (tilt, ASM transfer functions, thin-lens masks) are
 //!   wavelength-dependent.
 //!
-//! The split exists so that future **incoherent multiband sources** can be
+//! The split exists so that **incoherent multiband sources** can be
 //! represented as a collection of `BandField`s (one per band, each sharing a
 //! common [`Field`] grid geometry) whose intensities sum at detection. Nothing
 //! at the [`Field`] level assumes a single band.
@@ -65,6 +65,15 @@ pub enum FieldError {
     /// Wavelength was not strictly positive and finite (meters).
     #[error("wavelength must be positive and finite (got {0} m)")]
     NonPositiveWavelength(f64),
+    /// Bands do not share one grid geometry (sample counts or pitch);
+    /// incoherent summation requires identical grids.
+    #[error("band grids differ: expected (nx, ny, dx, dy) = {expected:?}, found {found:?}")]
+    GeometryMismatch {
+        /// Reference geometry `(nx, ny, dx, dy)`.
+        expected: (usize, usize, f64, f64),
+        /// The mismatching geometry.
+        found: (usize, usize, f64, f64),
+    },
     /// At least one complex sample had a non-finite real or imaginary part.
     #[error("field contains a non-finite sample")]
     NonFiniteSample,
@@ -397,6 +406,177 @@ impl BandField {
     }
 }
 
+/// A real-valued intensity grid on a center-origin rectangular lattice:
+/// the detector-plane output of propagation and the sum of incoherent
+/// bands. Pure data + bookkeeping (coordinates, power, peak, centroid) —
+/// no algorithm machinery.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Psf {
+    samples: Vec<f64>,
+    nx: usize,
+    ny: usize,
+    dx: f64,
+    dy: f64,
+}
+
+impl Psf {
+    /// Builds an intensity grid; validates nonempty, exact length, positive
+    /// finite pitch, and finite samples.
+    ///
+    /// # Errors
+    /// [`FieldError::EmptyGrid`], [`FieldError::DimensionMismatch`],
+    /// [`FieldError::NonPositivePitch`], or [`FieldError::NonFiniteSample`].
+    pub fn new(
+        samples: Vec<f64>,
+        nx: usize,
+        ny: usize,
+        dx: f64,
+        dy: f64,
+    ) -> Result<Self, FieldError> {
+        if nx == 0 || ny == 0 {
+            return Err(FieldError::EmptyGrid);
+        }
+        if samples.len() != nx * ny {
+            return Err(FieldError::DimensionMismatch {
+                len: samples.len(),
+                expected: nx * ny,
+            });
+        }
+        if !dx.is_finite() || dx <= 0.0 || !dy.is_finite() || dy <= 0.0 {
+            return Err(FieldError::NonPositivePitch { dx, dy });
+        }
+        if !samples.iter().all(|v| v.is_finite()) {
+            return Err(FieldError::NonFiniteSample);
+        }
+        Ok(Self {
+            samples,
+            nx,
+            ny,
+            dx,
+            dy,
+        })
+    }
+
+    /// Intensity $|u|^2$ grid of a [`BandField`].
+    pub fn from_band(band: &BandField) -> Self {
+        let f = band.field();
+        let (nx, ny) = f.dims();
+        let (dx, dy) = f.pitch();
+        Self {
+            samples: f.samples().iter().map(|s| s.norm_sqr()).collect(),
+            nx,
+            ny,
+            dx,
+            dy,
+        }
+    }
+
+    /// Intensity samples, row-major.
+    pub fn samples(&self) -> &[f64] {
+        &self.samples
+    }
+
+    /// Sample counts `(nx, ny)`.
+    pub fn dims(&self) -> (usize, usize) {
+        (self.nx, self.ny)
+    }
+
+    /// Sample pitch `(dx, dy)` in meters.
+    pub fn pitch(&self) -> (f64, f64) {
+        (self.dx, self.dy)
+    }
+
+    /// Physical coordinates of sample `(ix, iy)` (meters, origin-centered).
+    pub fn coord(&self, ix: usize, iy: usize) -> (f64, f64) {
+        (
+            (ix as f64 - (self.nx as f64 - 1.0) / 2.0) * self.dx,
+            (iy as f64 - (self.ny as f64 - 1.0) / 2.0) * self.dy,
+        )
+    }
+
+    /// Integrated intensity $\sum I\,\Delta x\,\Delta y$ (the traced
+    /// field's discrete power).
+    pub fn total_power(&self) -> f64 {
+        self.samples.iter().sum::<f64>() * self.dx * self.dy
+    }
+
+    /// Bin of the maximum sample `(ix, iy)`.
+    pub fn peak_bin(&self) -> (usize, usize) {
+        let mut best = (0usize, 0usize);
+        let mut bv = f64::MIN;
+        for (k, &v) in self.samples.iter().enumerate() {
+            if v > bv {
+                bv = v;
+                best = (k % self.nx, k / self.nx);
+            }
+        }
+        best
+    }
+
+    /// Physical position of the peak sample (meters).
+    pub fn peak_position(&self) -> (f64, f64) {
+        let (ix, iy) = self.peak_bin();
+        self.coord(ix, iy)
+    }
+
+    /// Intensity-weighted centroid (meters) — sub-bin peak position for
+    /// well-sampled spots.
+    pub fn centroid(&self) -> (f64, f64) {
+        let (mut sx, mut sy, mut sw) = (0.0f64, 0.0f64, 0.0f64);
+        for (k, &v) in self.samples.iter().enumerate() {
+            let (x, y) = self.coord(k % self.nx, k / self.nx);
+            sx += v * x;
+            sy += v * y;
+            sw += v;
+        }
+        if sw == 0.0 {
+            (0.0, 0.0)
+        } else {
+            (sx / sw, sy / sw)
+        }
+    }
+}
+
+/// Incoherent multiband intensity sum (decision D3 close-out, Phase 7
+/// task 7.2): a [`Psf`] whose samples are $\sum_k |u_k|^2$ over bands
+/// sharing one grid geometry.
+///
+/// Intensities — not amplitudes — sum because incoherent sources carry
+/// uncorrelated optical phases; coherent addition across *different*
+/// wavelengths is physically meaningless, so combine equal-$\lambda$
+/// amplitudes before binding, not here. Total power is the sum of per-band
+/// powers ([`Field::power`] each, [`Psf::total_power`] for the result).
+///
+/// # Errors
+/// [`FieldError::EmptyGrid`] for an empty slice;
+/// [`FieldError::GeometryMismatch`] for differing dims or pitch;
+/// [`FieldError::NonFiniteSample`] if any band carries a non-finite sample.
+pub fn sum_intensity(bands: &[&BandField]) -> Result<Psf, FieldError> {
+    let (first, rest) = bands.split_first().ok_or(FieldError::EmptyGrid)?;
+    let f0 = first.field();
+    let geom = |f: &Field| (f.dims().0, f.dims().1, f.pitch().0, f.pitch().1);
+    let g0 = geom(f0);
+    for b in rest {
+        let g = geom(b.field());
+        if g != g0 {
+            return Err(FieldError::GeometryMismatch {
+                expected: g0,
+                found: g,
+            });
+        }
+    }
+    let mut acc: Vec<f64> = f0.intensities().to_vec();
+    for b in rest {
+        for (a, i) in acc.iter_mut().zip(b.field().intensities()) {
+            *a += i;
+        }
+    }
+    if !acc.iter().all(|v| v.is_finite()) {
+        return Err(FieldError::NonFiniteSample);
+    }
+    Psf::new(acc, g0.0, g0.1, g0.2, g0.3)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,5 +711,51 @@ mod tests {
         assert_eq!(red.field(), blue.field());
         assert_ne!(red.lambda(), blue.lambda());
         assert_eq!(blue.clone().into_field(), grid);
+    }
+
+    // --- Incoherent multiband summation (Phase 7, task 7.2). ---
+
+    fn band_at(a: f64, phase: f64, lambda: f64) -> BandField {
+        BandField::new(lambda, Field::uniform(a, phase, 4, 4, 1e-3, 1e-3).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn sum_intensity_adds_powers_without_cross_terms() {
+        use std::f64::consts::PI;
+        let red = band_at(1.0, 0.0, 650e-9);
+        let blue = band_at(2.0, PI / 3.0, 450e-9);
+        let sum = sum_intensity(&[&red, &blue]).unwrap();
+        // |1|^2 + |2|^2 = 5 everywhere.
+        for s in sum.samples() {
+            assert!((s - 5.0).abs() < 1e-15);
+        }
+        assert!((sum.total_power() - (red.field().power() + blue.field().power())).abs() < 1e-15);
+        // Relative phase is irrelevant (incoherent): any phase gives 5.
+        let blue2 = band_at(2.0, -1.2, 450e-9);
+        assert_eq!(
+            sum.samples(),
+            sum_intensity(&[&red, &blue2]).unwrap().samples()
+        );
+        // Single band doubled.
+        let doubled = sum_intensity(&[&red, &red]).unwrap();
+        assert!((doubled.total_power() - 2.0 * red.field().power()).abs() < 1e-15);
+    }
+
+    #[test]
+    fn sum_intensity_validation() {
+        assert!(matches!(sum_intensity(&[]), Err(FieldError::EmptyGrid)));
+        let a = band_at(1.0, 0.0, 650e-9);
+        let other_pitch =
+            BandField::new(650e-9, Field::uniform(1.0, 0.0, 4, 4, 2e-3, 2e-3).unwrap()).unwrap();
+        assert!(matches!(
+            sum_intensity(&[&a, &other_pitch]),
+            Err(FieldError::GeometryMismatch { .. })
+        ));
+        let mut bad = band_at(1.0, 0.0, 650e-9);
+        *bad.field_mut().sample_mut(1, 1) = Complex64::new(f64::NAN, 0.0);
+        assert!(matches!(
+            sum_intensity(&[&bad]),
+            Err(FieldError::NonFiniteSample)
+        ));
     }
 }

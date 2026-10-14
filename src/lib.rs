@@ -33,7 +33,8 @@
 //! - **Field layers:** [`field::Field`] is a pure spatial grid;
 //!   [`field::BandField`] binds it to one wavelength and is the unit of
 //!   propagation and element interaction. Incoherent multiband sources are
-//!   later modeled as collections of `BandField`s (intensities sum).
+//!   collections of `BandField`s summed by [`field::sum_intensity`] into a
+//!   [`field::Psf`] (intensities add).
 //! - **Data vs algorithms:** field/element types are data + local
 //!   transformations; propagators are free functions in [`propagation`]
 //!   depending on field types, never the reverse.

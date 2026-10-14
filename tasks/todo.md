@@ -28,7 +28,7 @@ cargo doc -q --no-deps && cargo test`), approval before each commit.
   behavior documented; unit tests. Verification: gates green; values match
   catalog to 4 decimals. Deps: none. Files: `src/element.rs`, tests. Scope: S.
 
-- [ ] **Task 7.2: Incoherent multiband summation (D3 close-out)**
+- [x] **Task 7.2: Incoherent multiband summation (D3 close-out)**
   `field::sum_intensity(&[&BandField]) -> Result<Field, FieldError>`:
   identical-grid validation, intensity (not amplitude) accumulation,
   documented coherent-addition caveat. Acceptance: doubling one band doubles

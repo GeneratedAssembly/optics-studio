@@ -7,6 +7,23 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `Material::sellmeier(terms)` (Phase 7 task 7.1): standard Sellmeier Book-1
+  dispersion model $n^2 = 1 + \sum B_i \lambda_\mu^2/(\lambda_\mu^2 - C_i)$
+  (catalog $(B_i, C_i)$ pairs, µm convention, zero absorption, angle
+  ignored); NaN outside resonance-free bands surfaces as `InvalidMedium` at
+  apply. N-BK7 golden tests: n_d/n_F/n_C within 5e-4 of catalog,
+  F−C dispersion 0.00807, Abbe V_d ≈ 64.2, blue-stronger law.
+- `field::sum_intensity(&[&BandField]) -> Result<Psf, FieldError>` (Phase 7
+  task 7.2, decision D3 close-out): incoherent multiband intensity sum —
+  identical-grid validation (`FieldError::GeometryMismatch` newly added),
+  intensities not amplitudes, no cross terms.
+- `Psf` promoted from `beamline` to `field.rs` as the crate's real-valued
+  intensity-grid data type (pure data + bookkeeping): constructors
+  `Psf::new` (validating) and `Psf::from_band`; `beamline` re-exports
+  `Psf` so the `optics_core::beamline::Psf` path stays live.
+
 ### Changed
 
 - **Crate renamed `optics-rs` → `optics-core`** (Phase 7 task 7.0): a crate
