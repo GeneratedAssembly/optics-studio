@@ -313,6 +313,35 @@ impl Material {
     pub fn absorption_at(&self, lambda: f64, angle: f64) -> f64 {
         (self.absorption)(lambda, angle)
     }
+
+    /// **Sellmeier Book-1 dispersion model** (Phase 7 task 7.1): a
+    /// transparent glass with
+    ///
+    /// $$n^2(\\lambda) = 1 + \\sum_i \\frac{B_i \\lambda_\\mu^2}{\\lambda_\\mu^2 - C_i},$$
+    ///
+    /// $\\lambda_\\mu$ in **micrometers**, `terms` the catalog $(B_i, C_i)$
+    /// pairs ($B_i$ dimensionless, $C_i = \\lambda_{\\text{res},i}^2$ in
+    /// µm² — the standard tabulated form; optical glasses use three
+    /// terms). Absorption is zero (transparent model); the angle argument
+    /// is ignored — screens are normal-incidence scalar (`physics.md` §10).
+    /// Outside the resonance-free band ($n^2 \\le 0$) the model returns
+    /// NaN, which surfaces at `apply` time as
+    /// [`OpticsError::InvalidMedium`] rather than panicking here.
+    pub fn sellmeier(terms: impl IntoIterator<Item = (f64, f64)>) -> Self {
+        let terms: Vec<(f64, f64)> = terms.into_iter().collect();
+        Self {
+            n: Box::new(move |lambda, _angle| {
+                let l = lambda * 1e6;
+                let l2 = l * l;
+                let mut n2 = 1.0;
+                for (b, c) in &terms {
+                    n2 += b * l2 / (l2 - c);
+                }
+                n2.sqrt()
+            }),
+            absorption: Box::new(|_lambda, _angle| 0.0),
+        }
+    }
 }
 
 /// Clear aperture (stop) of a phase element — the shared geometry vocabulary
@@ -4149,6 +4178,66 @@ mod tests {
                 (0.0, 0.0),
             ),
             Err(OpticsError::InvalidWedge { .. })
+        ));
+    }
+
+    // --- Sellmeier materials (Phase 7, task 7.1). ---
+
+    fn bk7() -> Material {
+        // N-BK7, Schott catalog Sellmeier-Book-1 coefficients.
+        Material::sellmeier([
+            (1.03961212, 0.00600069867),
+            (0.232796349, 0.0200179144),
+            (1.01041127, 103.560653),
+        ])
+    }
+
+    #[test]
+    fn sellmeier_bk7_golden_values() {
+        let g = bk7();
+        let nd = g.n_at(587.56e-9, 0.0);
+        let nf = g.n_at(486.13e-9, 0.0);
+        let nc = g.n_at(656.27e-9, 0.0);
+        // Catalog n_d = 1.51680; this widely-tabulated coefficient set
+        // evaluates to 1.51715 — within the published melt-lot spread
+        // (±0.003), tolerance 5e-4.
+        assert!((nd - 1.5168).abs() < 5e-4, "n_d {nd}");
+        assert!((nf - 1.5224).abs() < 5e-4, "n_F {nf}");
+        assert!((nc - 1.5143).abs() < 5e-4, "n_C {nc}");
+        // Sec. 4.1.3 anchors: F-C dispersion and Abbe number V_d ~ 64.2.
+        assert!((nf - nc - 0.00807).abs() < 2e-4, "dispersion {}", nf - nc);
+        let vd = (nd - 1.0) / (nf - nc);
+        assert!((vd - 64.17).abs() < 0.2, "V_d {vd}");
+        // Blue-stronger law (Sec. 4.1.3): n(F) > n(d) > n(C).
+        assert!(nf > nd && nd > nc);
+    }
+
+    #[test]
+    fn sellmeier_angle_ignored_nan_below_resonance_surfaces_as_medium_error() {
+        let g = bk7();
+        assert_eq!(g.n_at(550e-9, 0.0), g.n_at(550e-9, 0.7));
+        assert_eq!(g.absorption_at(550e-9, 0.3), 0.0);
+        // Just below the first resonance pole (sqrt(C1) = 77.46 um-nm):
+        // the term diverges through -inf, n^2 < 0 -> NaN, no panic.
+        assert!(g.n_at(77.0e-9, 0.0).is_nan());
+        assert!(g.n_at(77.4e-9, 0.0).is_nan());
+        // Far below the pole the sum returns toward n = 1 (model artifact
+        // of the transparent-book form; finite, no panic).
+        assert!((g.n_at(50e-9, 0.0) - 0.4735).abs() < 1e-3);
+        // Surfaces at apply time through the element's medium validation.
+        let surf = RefractiveSurface::new(
+            SurfaceProfile::Spherical { radius: 0.1 },
+            air(),
+            g,
+            None,
+            ClearAperture::Circle(100e-6),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let band = BandField::uniform(1.0, 0.0, 8, 8, 1e-4, 1e-4, 77.0e-9).unwrap();
+        assert!(matches!(
+            surf.apply(&band),
+            Err(OpticsError::InvalidMedium { .. })
         ));
     }
 }

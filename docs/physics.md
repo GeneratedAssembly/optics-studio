@@ -654,9 +654,11 @@ power drift over 500–600 nm vs >4% uncorrected, §11 row 24).
   orientation (§9.1); oblique interaction (incidence-angle dependence)
   deferred.
 - Dispersion: $\lambda$ is fixed per `BandField`; thin-lens chromaticity
-  lives in the $f(\lambda)$ closure (§9.2); `Material` $n(\lambda, \text{angle})$
-  closures are reserved for refractive/thick models (Phase 6), and the
-  grating depth-to-phase relation (§9.4) is fabrication-side, not applied.
+  lives in the $f(\lambda)$ closure (§9.2); refractive screens consume
+  `Material` $n(\lambda,\text{angle})$ closures (angle reserved), with
+  `Material::sellmeier` the standard Book-1 dispersion mechanism (§9.7);
+  the grating depth-to-phase relation (§9.4) is fabrication-side, not
+  applied.
 - Sources (§9.5–9.6) are paraxial modes ($N \le 64$ cap) and the scalar
   spherical wave; mode windows must cover $\sim\sqrt{N}\,w(z)$, and the
   spherical wave's hard window edge bounds any absolute-field comparison

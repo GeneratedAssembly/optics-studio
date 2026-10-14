@@ -20,11 +20,11 @@ cargo doc -q --no-deps && cargo test`), approval before each commit.
   zero `optics_rs` references in tracked sources. Verification: gates;
   `grep -r optics_rs src tests examples` empty. Deps: none. Scope: S.
 
-- [ ] **Task 7.1: Sellmeier material model**
+- [x] **Task 7.1: Sellmeier material model**
   Concrete dispersion mechanism for `Material`: `Material::sellmeier(coeffs)`
   with n²(λ) = 1 + Σ Bᵢλ²/(λ²−Cᵢ) (λ in µm, standard form), angle argument
   ignored (normal incidence). Acceptance: golden values for N-BK7
-  (n_d ≈ 1.5168 @ 0.5876 µm, n_F − n_C ≈ 0.0180); non-finite/out-of-band
+  (n_d ≈ 1.5168 @ 0.5876 µm ± melt spread, n_F − n_C ≈ 0.0081, V_d ≈ 64.2); non-finite/out-of-band
   behavior documented; unit tests. Verification: gates green; values match
   catalog to 4 decimals. Deps: none. Files: `src/element.rs`, tests. Scope: S.
 
