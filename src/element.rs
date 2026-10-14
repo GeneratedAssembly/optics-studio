@@ -336,12 +336,20 @@ impl Material {
     /// NaN, which surfaces at `apply` time as
     /// [`OpticsError::InvalidMedium`] rather than panicking here.
     pub fn sellmeier(terms: impl IntoIterator<Item = (f64, f64)>) -> Self {
+        Self::sellmeier_book1(1.0, terms)
+    }
+
+    /// Generalized Sellmeier Book-1 with a constant offset:
+    /// $n^2(\lambda) = C_0 + \sum_i B_i \lambda_\mu^2/(\lambda_\mu^2 - C_i)$
+    /// (the form tabulated for e.g. CaF2, H.H. Li 1980). `sellmeier` is the
+    /// $C_0 = 1$ special case.
+    pub fn sellmeier_book1(constant: f64, terms: impl IntoIterator<Item = (f64, f64)>) -> Self {
         let terms: Vec<(f64, f64)> = terms.into_iter().collect();
         Self {
             n: Box::new(move |lambda, _angle| {
                 let l = lambda * 1e6;
                 let l2 = l * l;
-                let mut n2 = 1.0;
+                let mut n2 = constant;
                 for (b, c) in &terms {
                     n2 += b * l2 / (l2 - c);
                 }
@@ -4388,6 +4396,16 @@ mod tests {
         assert!((vd - 64.17).abs() < 0.2, "V_d {vd}");
         // Blue-stronger law (Sec. 4.1.3): n(F) > n(d) > n(C).
         assert!(nf > nd && nd > nc);
+        // Book-1 with constant offset: CaF2 (H.H. Li, JPCRD 9, 161 (1980)).
+        let caf2 = Material::sellmeier_book1(
+            1.33973,
+            [
+                (0.69913, 0.09374f64.powi(2)),
+                (0.11994, 21.18f64.powi(2)),
+                (4.35181, 38.46f64.powi(2)),
+            ],
+        );
+        assert!((caf2.n_at(587.6e-9, 0.0) - 1.4338).abs() < 1e-3, "CaF2 nd");
     }
 
     #[test]

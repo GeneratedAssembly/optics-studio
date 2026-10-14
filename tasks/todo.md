@@ -76,21 +76,21 @@ cargo doc -q --no-deps && cargo test`), approval before each commit.
 
 ## Phase 8 — Zemax import (optics-zemax → 0.1.0) — GATE: Open Q1/Q5
 
-- [ ] **Task 8.1: Workspace restructure** — root `Cargo.toml` gains
+- [x] **Task 8.1: Workspace restructure** — root `Cargo.toml` gains
   `[workspace] members = [".", "crates/optics-zemax"]` (exclude-default for
   ui later), `crates/` scaffold, CI/gates still green at root. Scope: S.
-- [ ] **Task 8.2: .zmx line parser** — header (VERSION/LENSNAME/NSURF/WAVE),
+- [x] **Task 8.2: .zmx line parser** — header (VERSION/LENSNAME/NSURF/WAVE),
   surface rows (RADII/THIC/GLASS/CONI/PARA even-asphere terms/semi-diam),
   strict unknown-token failure with line numbers; golden-file corpus
   (hand-built + user-supplied real prescriptions). Scope: M.
-- [ ] **Task 8.3: Glass catalog** — Sellmeier coefficient tables
+- [x] **Task 8.3: Glass catalog** — Sellmeier coefficient tables
   (SCHOTT/… formats) → `Material::sellmeier`; built-in subset fallback;
   golden n_d/n_F/n_C. Scope: M. Deps: 7.1, 8.2.
-- [ ] **Task 8.4: Prescription → system builder** — sign/convention
+- [x] **Task 8.4: Prescription → system builder** — sign/convention
   conversion table (Zemax R/thickness/semi-diam → `RefractiveSurface` +
   `Beamline` medium steps), paraxial invariants (EFL/BFL vs Eq. 4.1) as
   unit checks. Scope: M. Deps: 8.2, 8.3.
-- [ ] **Task 8.5: Validation suite** — known doublet/triplet prescriptions:
+- [x] **Task 8.5: Validation suite** — known doublet/triplet prescriptions:
   imported-system BFL/PSF vs published values (tolerances documented),
   round-trip vs manual construction; release 0.1.0 + README. Scope: M.
 

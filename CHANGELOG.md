@@ -7,6 +7,47 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `Material::sellmeier_book1(constant, terms)` (core): generalized Book-1
+  form $n^2 = C_0 + \sum B\lambda^2/(\lambda^2 - C)$ — required by the
+  H.H. Li (1980) CaF2 parameterization; `sellmeier` is the $C_0 = 1$ case.
+
+### Workspace
+
+- Repository is now a cargo workspace: root package `optics-core` +
+  `crates/optics-zemax` (path dependency). No `git mv`, history intact.
+
+### New crate: optics-zemax 0.1.0 (Phase 8)
+
+- `zmx`: text-format `.zmx` parser (line-oriented, CRLF-tolerant):
+  `MODE SEQ` required; `UNIT` length normalization to mm (MM/CM/M/IN);
+  `NAME`/`GCAT`/`ENPD`/`WAVM`/`PWAV` header capture; per-surface
+  `COMM/STOP/TYPE/CURV/CONI/PARA/DISZ(INFINITY)/GLAS/DIAM/MIRR`. Unknown
+  keywords ignored (real files carry hundreds); structural failures
+  typed (`UnsupportedMode`, `BadHeader`, `BadField`).
+- `catalog`: built-in Sellmeier entries with provenance — CAF2 (H.H. Li,
+  JPCRD 9, 161, 1980), F_SILICA (Malitson 1963), N-BK7 (SCHOTT);
+  `index_at`, `material` (air = None). Published fits reproduce the
+  Thorlabs ACA254-100-UV paraxial BFL to 0.15% at the design center
+  wavelength (EFL ~3% off nominal 100 mm — Zemax's proprietary SCHOTTIR
+  catalog residual; external `.AGF` import pending).
+- `builder`: `ImportedSystem` — parse-time validation (STANDARD only,
+  mirrors and PARA aspherics rejected with reason), dispersive
+  `RefractiveSurface` + medium-gap `Beamline` plan (two-phase assembly,
+  no self-reference), `paraxial_at` (matrix EFL/BFL), `trace`/`psf` and
+  `trace_subaperture`/`psf_subaperture` (stop-down knob for small
+  analysis grids), `TraceError<E>`. Glasses resolve at the traced band's
+  wavelength — dispersive media stay consistent through the chain.
+- Golden corpus: `tests/data/ACA254-100-UV.zmx` (user-provided Thorlabs
+  prescription, text format); `import_doublet` integration test traces a
+  UV beam through the imported doublet and verifies the imported image
+  plane is the focal plane (on-axis intensity > 8x at ±20 mm defocus,
+  > 30% power within 60 um of the spot centroid).
+- Binary `.zar` archives (e.g. the supplied TL4X-SAP black box) are NOT
+  a zip/text format and remain out of scope; export the `.zmx` from
+  Zemax for import.
+
 ## [0.7.0] - 2026-10-14
 
 Phase 7: core forward-physics close-out — `Material::sellmeier`,

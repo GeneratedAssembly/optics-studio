@@ -1,0 +1,10 @@
+[package]
+name = "optics-zemax"
+version = "0.1.0"
+edition = "2024"
+description = "Zemax prescription (.zmx) import for optics-core systems"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+optics-core = { path = "../.." }
+thiserror = "2"
