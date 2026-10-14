@@ -28,6 +28,18 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   `strehl` (power-equalized peak ratio vs reference PSF), and
   `marechal_strehl` (exp(-(2 pi sigma)^2), pairs with Zernike RMS).
   `propagation::fft` module raised to `pub(crate)` for the MTF transform.
+- Zernike wavefront decomposition (Phase 7 task 7.4, `analysis`):
+  `ZernikeMode`/`zernike_modes` (explicit (n, m) ordering, not Noll),
+  `zernike_radial` via the exact binomial-sum Jacobi $P_k^{(m,0)}$
+  (golden-checked: $R_2^0 = 2\rho^2-1$, $R_3^1 = 3\rho^3-2\rho$,
+  $R_4^0$, $R_4^2$), `zernike` with $\sqrt{n+1}$/$\sqrt{2(n+1)}$
+  normalization (unit RMS over the disk), `zernike_fit` least-squares
+  (Cholesky normal equations) returning coefficients (radians), residual
+  RMS, and `residual_rms_waves` feeding `marechal_strehl`;
+  `AnalysisError { InvalidPupil, DimensionMismatch, EmptyPupil, Singular }`.
+  Tests: discrete orthonormality Gram ($\pm 2\cdot10^{-3}$, 512^2),
+  synthetic 3-mode recovery to 1e-9, unmodeled spherical-aberration
+  residual tracks 0.02 waves -> Strehl 0.984.
 - `Psf` promoted from `beamline` to `field.rs` as the crate's real-valued
   intensity-grid data type (pure data + bookkeeping): constructors
   `Psf::new` (validating) and `Psf::from_band`; `beamline` re-exports

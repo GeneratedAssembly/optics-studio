@@ -171,6 +171,254 @@ pub fn marechal_strehl(rms_waves: f64) -> f64 {
     (-(2.0 * std::f64::consts::PI * rms_waves) * (2.0 * std::f64::consts::PI * rms_waves)).exp()
 }
 
+/// Errors of [`zernike_fit`].
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum AnalysisError {
+    /// Pupil radius was not positive and finite (m).
+    #[error("pupil radius must be positive and finite (got {0} m)")]
+    InvalidPupil(f64),
+    /// Sample buffer length did not match the declared grid.
+    #[error("sample buffer length {len} does not match grid size {expected}")]
+    DimensionMismatch {
+        /// Provided length.
+        len: usize,
+        /// Expected `nx * ny`.
+        expected: usize,
+    },
+    /// No grid samples fell inside the pupil.
+    #[error("pupil of radius {0} m contains no grid samples")]
+    EmptyPupil(f64),
+    /// The normal equations were singular (mode list too large for the
+    /// sampled pupil).
+    #[error("Zernike normal equations singular (n_max too high for this pupil)")]
+    Singular,
+}
+
+/// One Zernike mode: radial order $n \ge 0$, azimuthal order $m$
+/// ($|m| \le n$, $n - |m|$ even).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZernikeMode {
+    /// Radial order.
+    pub n: u32,
+    /// Azimuthal order (negative selects the sin branch).
+    pub m: i32,
+}
+
+/// Radial polynomial via the Jacobi representation
+/// $R_n^m(r) = (-1)^{(n-m)/2} r^m P_{(n-m)/2}^{(m,0)}(1 - 2r^2)$
+/// (exact for all valid $n, m$; golden-checked below).
+pub fn zernike_radial(n: u32, m: u32, rho: f64) -> f64 {
+    debug_assert!(m <= n && (n - m).is_multiple_of(2));
+    let k = (n - m) / 2;
+    let x = 1.0 - 2.0 * rho * rho;
+    let p = jacobi_p(k, m, x);
+    let sign = if k.is_multiple_of(2) { 1.0 } else { -1.0 };
+    sign * rho.powi(m as i32) * p
+}
+
+/// Jacobi $P_k^{(\alpha,0)}(x)$ for integer $\alpha \ge 0$ via the
+/// exact binomial sum $2^{-k}\sum_j \binom{k+\alpha}{j}\binom{k}{k-j}
+/// (x-1)^{k-j}(x+1)^j$ (golden-checked against the classical radial
+/// polynomials; no recurrence coefficients to misremember).
+fn jacobi_p(k: u32, alpha: u32, x: f64) -> f64 {
+    let mut s = 0.0;
+    for j in 0..=k {
+        s += binom(k + alpha, j)
+            * binom(k, k - j)
+            * (x - 1.0).powi((k - j) as i32)
+            * (x + 1.0).powi(j as i32);
+    }
+    s / (1u64 << k) as f64
+}
+
+/// Exact integer binomial coefficient (small indices, f64 result).
+fn binom(n: u32, k: u32) -> f64 {
+    if k > n {
+        return 0.0;
+    }
+    let kk = k.min(n - k);
+    let mut acc = 1.0;
+    for i in 0..kk {
+        acc *= (n - i) as f64;
+        acc /= (i + 1) as f64;
+    }
+    acc
+}
+
+/// Orthonormal-on-the-unit-disk Zernike value ($\int Z_i Z_j\,dA = \pi
+/// \delta_{ij}$ with the $\sqrt{2(n+1)}$ normalization): radial part
+/// times $\cos(m\theta)$ for $m \ge 0$, $\sin(|m|\theta)$ for $m < 0$.
+pub fn zernike(mode: ZernikeMode, rho: f64, theta: f64) -> f64 {
+    let m = mode.m.unsigned_abs();
+    // sqrt(n+1) on-axis / sqrt(2(n+1)) off-axis: every mode has unit RMS
+    // over the unit disk (int Z_i Z_j dA = pi * delta_ij).
+    let norm = if m == 0 {
+        (mode.n as f64 + 1.0).sqrt()
+    } else {
+        (2.0 * (mode.n as f64 + 1.0)).sqrt()
+    };
+    let r = zernike_radial(mode.n, m, rho);
+    if mode.m >= 0 {
+        norm * r * (m as f64 * theta).cos()
+    } else {
+        norm * r * (m as f64 * theta).sin()
+    }
+}
+
+/// Mode list up to radial order `n_max`, ordered by $n$ then $m$ from
+/// $-n$ to $+n$ in steps of 2 (explicit, not Noll — the list is returned
+/// with the fit so the mapping is self-documenting).
+pub fn zernike_modes(n_max: u32) -> Vec<ZernikeMode> {
+    let mut out = Vec::new();
+    for n in 0..=n_max {
+        let mut m = -(n as i32);
+        while m <= n as i32 {
+            out.push(ZernikeMode { n, m });
+            m += 2;
+        }
+    }
+    out
+}
+
+/// Wavefront decomposition result: coefficients (radians) per mode,
+/// residual RMS, and the Maréchal-convenient residual in waves.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WavefrontDecomp {
+    /// Fitted modes (same order as `coefficients`).
+    pub modes: Vec<ZernikeMode>,
+    /// Coefficients (radians): phase $\approx \sum_k c_k Z_k$.
+    pub coefficients: Vec<f64>,
+    /// RMS of the fit residual over the pupil (radians).
+    pub residual_rms: f64,
+}
+
+impl WavefrontDecomp {
+    /// Residual wavefront RMS **in waves** ($\sigma/2\pi$) — the
+    /// [`marechal_strehl`] input.
+    pub fn residual_rms_waves(&self) -> f64 {
+        self.residual_rms / (2.0 * std::f64::consts::PI)
+    }
+}
+
+/// Least-squares Zernike fit of a phase grid (radians) over a circular
+/// pupil of radius `pupil` (m) centered on the grid origin. Solves the
+/// normal equations with Cholesky (mode count $\le (n+1)(n+2)/2$, tiny).
+///
+/// # Errors
+/// [`AnalysisError::InvalidPupil`], [`AnalysisError::DimensionMismatch`],
+/// [`AnalysisError::EmptyPupil`], [`AnalysisError::Singular`].
+pub fn zernike_fit(
+    phase: &[f64],
+    nx: usize,
+    ny: usize,
+    dx: f64,
+    dy: f64,
+    pupil: f64,
+    n_max: u32,
+) -> Result<WavefrontDecomp, AnalysisError> {
+    if !pupil.is_finite() || pupil <= 0.0 {
+        return Err(AnalysisError::InvalidPupil(pupil));
+    }
+    if phase.len() != nx * ny {
+        return Err(AnalysisError::DimensionMismatch {
+            len: phase.len(),
+            expected: nx * ny,
+        });
+    }
+    let modes = zernike_modes(n_max);
+    let k = modes.len();
+    let mut ata = vec![vec![0.0f64; k]; k];
+    let mut atb = vec![0.0f64; k];
+    let mut npix = 0usize;
+    let mut b2sum = 0.0f64; // residual accumulator base: sum of phase^2
+    for iy in 0..ny {
+        let y = (iy as f64 - (ny as f64 - 1.0) / 2.0) * dy;
+        for ix in 0..nx {
+            let x = (ix as f64 - (nx as f64 - 1.0) / 2.0) * dx;
+            let rho2 = x * x + y * y;
+            if rho2 > pupil * pupil {
+                continue;
+            }
+            npix += 1;
+            let rho = rho2.sqrt() / pupil;
+            let theta = y.atan2(x);
+            let p = phase[iy * nx + ix];
+            b2sum += p * p;
+            let zs: Vec<f64> = modes.iter().map(|&m| zernike(m, rho, theta)).collect();
+            for a in 0..k {
+                atb[a] += zs[a] * p;
+                for b in 0..k {
+                    ata[a][b] += zs[a] * zs[b];
+                }
+            }
+        }
+    }
+    if npix == 0 {
+        return Err(AnalysisError::EmptyPupil(pupil));
+    }
+    let ata_saved = ata.clone();
+    let c = cholesky_solve(&mut ata, &atb).ok_or(AnalysisError::Singular)?;
+    // Residual squared: ||A c - b||^2 = b.b - 2 c.(A^T b) + c^T (A^T A) c
+    let mut quad = b2sum;
+    for a in 0..k {
+        quad -= 2.0 * c[a] * atb[a];
+        for b in 0..k {
+            quad += c[a] * c[b] * ata_saved[a][b];
+        }
+    }
+    let residual_rms = (quad.max(0.0) / npix as f64).sqrt();
+    Ok(WavefrontDecomp {
+        modes,
+        coefficients: c,
+        residual_rms,
+    })
+}
+
+fn cholesky_solve(a: &mut [Vec<f64>], b: &[f64]) -> Option<Vec<f64>> {
+    let n = b.len();
+    // in-place Cholesky (lower)
+    for i in 0..n {
+        for j in 0..=i {
+            let mut s = a[i][j];
+            s -= a[i][..j]
+                .iter()
+                .zip(&a[j][..j])
+                .map(|(x, y)| x * y)
+                .sum::<f64>();
+            if i == j {
+                if s <= 0.0 {
+                    return None;
+                }
+                a[i][i] = s.sqrt();
+            } else {
+                a[i][j] = s / a[j][j];
+            }
+        }
+    }
+    let mut y = vec![0.0; n];
+    for i in 0..n {
+        let mut s = b[i];
+        s -= a[i][..i]
+            .iter()
+            .zip(&y[..i])
+            .map(|(x, y)| x * y)
+            .sum::<f64>();
+        y[i] = s / a[i][i];
+    }
+    let mut x = vec![0.0; n];
+    for i in (0..n).rev() {
+        let mut s = y[i];
+        s -= a[i + 1..]
+            .iter()
+            .map(|row| row[i])
+            .zip(&x[i + 1..])
+            .map(|(v, x)| v * x)
+            .sum::<f64>();
+        x[i] = s / a[i][i];
+    }
+    Some(x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,6 +502,159 @@ mod tests {
         assert!(s > 0.2 && s < 0.6, "wide-vs-narrow {s}"); // (80/160)^2 = 0.25
         assert!(marechal_strehl(0.1) > 0.67 && marechal_strehl(0.1) < 0.68);
         assert!(marechal_strehl(0.0) == 1.0);
+    }
+
+    #[test]
+    fn zernike_radial_golden_values() {
+        // Classical low-order radial polynomials.
+        for rho in [0.0f64, 0.3, 0.7, 1.0] {
+            assert!((zernike_radial(0, 0, rho) - 1.0).abs() < 1e-14);
+            assert!((zernike_radial(1, 1, rho) - rho).abs() < 1e-14);
+            assert!((zernike_radial(2, 0, rho) - (2.0 * rho * rho - 1.0)).abs() < 1e-14);
+            assert!((zernike_radial(2, 2, rho) - rho * rho).abs() < 1e-14);
+            assert!((zernike_radial(3, 1, rho) - (3.0 * rho.powi(3) - 2.0 * rho)).abs() < 1e-14);
+            assert!(
+                (zernike_radial(4, 2, rho) - (4.0 * rho.powi(4) - 3.0 * rho * rho)).abs() < 1e-14
+            );
+            assert!(
+                (zernike_radial(4, 0, rho) - (6.0 * rho.powi(4) - 6.0 * rho * rho + 1.0)).abs()
+                    < 1e-14
+            );
+        }
+    }
+
+    fn disk_grid(n: usize, d: f64, pupil: f64, f: impl Fn(f64, f64) -> f64) -> Vec<f64> {
+        let mut v = Vec::with_capacity(n * n);
+        for iy in 0..n {
+            let y = (iy as f64 - (n as f64 - 1.0) / 2.0) * d;
+            for ix in 0..n {
+                let x = (ix as f64 - (n as f64 - 1.0) / 2.0) * d;
+                let r = x.hypot(y);
+                v.push(if r <= pupil {
+                    f(r / pupil, y.atan2(x))
+                } else {
+                    0.0
+                });
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn zernike_modes_are_discretely_orthonormal() {
+        // int Zi Zj dA over the pupil = pi * pupil^2 * delta_ij (sqrt(2(n+1))
+        // normalization): check the Gram matrix on a 512^2 grid.
+        let (n, d, pupil) = (512usize, 40e-6, 10e-3);
+        let modes = zernike_modes(4);
+        let mut gram = vec![vec![0.0f64; modes.len()]; modes.len()];
+        let mut zs_cache = vec![0.0f64; modes.len()];
+        for iy in 0..n {
+            let y = (iy as f64 - (n as f64 - 1.0) / 2.0) * d;
+            for ix in 0..n {
+                let x = (ix as f64 - (n as f64 - 1.0) / 2.0) * d;
+                let r = x.hypot(y);
+                if r > pupil {
+                    continue;
+                }
+                let (rho, th) = (r / pupil, y.atan2(x));
+                for (k, &m) in modes.iter().enumerate() {
+                    zs_cache[k] = zernike(m, rho, th);
+                }
+                for a in 0..modes.len() {
+                    for b in 0..=a {
+                        gram[a][b] += zs_cache[a] * zs_cache[b] * d * d;
+                    }
+                }
+            }
+        }
+        let area_norm = PI * pupil * pupil;
+        for a in 0..modes.len() {
+            for b in 0..=a {
+                let expect = if a == b { 1.0 } else { 0.0 };
+                let got = gram[a][b] / area_norm;
+                assert!(
+                    (got - expect).abs() < 2e-3,
+                    "gram[{}][{}] = {got} vs {expect}",
+                    modes[a].n,
+                    modes[b].n
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zernike_fit_recovers_synthetic_wavefront() {
+        // phase = 0.5 Z(2,0) + 0.3 Z(3,-1) + 0.1 Z(4,2) (radians),
+        // n_max = 4 recovers coefficients exactly, residual ~ 0.
+        let (n, d, pupil) = (256usize, 100e-6, 10e-3);
+        let modes = [
+            (ZernikeMode { n: 2, m: 0 }, 0.5),
+            (ZernikeMode { n: 3, m: -1 }, 0.3),
+            (ZernikeMode { n: 4, m: 2 }, 0.1),
+        ];
+        let phase = disk_grid(n, d, pupil, |rho, th| {
+            modes.iter().map(|(m, a)| a * zernike(*m, rho, th)).sum()
+        });
+        let wf = zernike_fit(&phase, n, n, d, d, pupil, 4).unwrap();
+        for (mode, amp) in modes {
+            let k = wf
+                .modes
+                .iter()
+                .position(|&m| m == mode)
+                .expect("mode present");
+            assert!(
+                (wf.coefficients[k] - amp).abs() < 1e-9,
+                "coeff for {mode:?}: {} vs {amp}",
+                wf.coefficients[k]
+            );
+        }
+        assert!(wf.residual_rms < 1e-9);
+        // Marechal pairing: residual ~ 0 -> Strehl ~ 1.
+        assert!((marechal_strehl(wf.residual_rms_waves()) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn zernike_fit_residual_tracks_unmodeled_spherical() {
+        // Fit only up to n_max = 2 a wavefront containing 0.02 waves of
+        // Z(4,0): residual RMS (waves) = 0.02 (unit-RMS modes), Maréchal
+        // Strehl = exp(-(2 pi 0.02)^2) ~ 0.9843.
+        let (n, d, pupil) = (256usize, 100e-6, 10e-3);
+        let s4 = ZernikeMode { n: 4, m: 0 };
+        let phase = disk_grid(n, d, pupil, |rho, th| {
+            2.0 * PI
+                * (0.05 * zernike(ZernikeMode { n: 2, m: 0 }, rho, th)
+                    + 0.02 * zernike(s4, rho, th))
+        });
+        let wf = zernike_fit(&phase, n, n, d, d, pupil, 2).unwrap();
+        assert!((wf.residual_rms_waves() - 0.02).abs() < 1e-3);
+        let st = marechal_strehl(wf.residual_rms_waves());
+        assert!((st - 0.9843).abs() < 2e-3, "marechal {st}");
+    }
+
+    #[test]
+    fn zernike_validation() {
+        let phase = vec![0.0; 16];
+        assert!(matches!(
+            zernike_fit(&phase, 4, 4, 1e-3, 1e-3, -1.0, 2),
+            Err(AnalysisError::InvalidPupil(-1.0))
+        ));
+        assert!(matches!(
+            zernike_fit(&phase, 4, 5, 1e-3, 1e-3, 1e-3, 2),
+            Err(AnalysisError::DimensionMismatch { .. })
+        ));
+        // Pupil smaller than the nearest off-center sample: only the
+        // origin-column pixels... use a pupil that catches zero samples.
+        let big = vec![0.0; 4 * 4];
+        assert!(matches!(
+            zernike_fit(&big, 4, 4, 1.0, 1.0, 1e-9, 2),
+            Err(AnalysisError::EmptyPupil(_) | AnalysisError::Singular)
+        ));
+        // One pixel of support cannot condition a 6-mode fit.
+        let tiny = disk_grid(9, 1.0, 0.4, |_, _| 1.0);
+        assert!(matches!(
+            zernike_fit(&tiny, 9, 9, 1.0, 1.0, 0.4, 3),
+            Err(AnalysisError::EmptyPupil(_) | AnalysisError::Singular)
+        ));
     }
 
     #[test]

@@ -46,9 +46,9 @@ cargo doc -q --no-deps && cargo test`), approval before each commit.
   phase5 PSF. Deps: 7.2 optional. Files: `src/analysis.rs` (new), lib.rs,
   docs. Scope: M.
 
-- [ ] **Task 7.4: Zernike wavefront decomposition**
+- [x] **Task 7.4: Zernike wavefront decomposition**
   Radial polynomials by recurrence (dependency-free, crate convention),
-  least-squares fit of a phase grid to Noll-ordered Zernikes (piston/tip/tilt
+  least-squares fit of a phase grid to Zernikes (explicit (n,m) mode list, self-documenting) (piston/tip/tilt
   optional removal), RMS residual + per-coefficient output. Acceptance:
   golden ring tests (defocus = √8(n²−n)/… convention documented),
   recovered coefficients of synthetic Zernike sums within 1e-3, orthogonality
