@@ -19,6 +19,12 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   radians), and `grid_thickness` (relief meters, chromatic
   $\varphi = 2\pi(n(\lambda)-1)h/\lambda$ rebuilt per band). (Phase-9
   task 9.3.)
+- `optics-inverse`: `Observation` (numpy-ready flat `[channel][band][scene]
+  [row][col]` stacks) + `Renderer` — incoherent multi-band, multi-scene
+  render through the core ASM, with finite-difference derivative channels
+  ∂I/∂x₀, ∂I/∂y₀, ∂I/∂λ (the Fisher/CRLB input). Goldens: defocus/mask/
+  defocus piston identity, A(+z)∘A(−z) round-trip, ∂I/∂x₀ = −∂I/∂x
+  translation invariance, chromatic-focus λ-channel. (Phase-9 task 9.4.)
 - `Material::sellmeier_book1(constant, terms)` (core): generalized Book-1
   form $n^2 = C_0 + \sum B\lambda^2/(\lambda^2 - C)$ — required by the
   H.H. Li (1980) CaF2 parameterization; `sellmeier` is the $C_0 = 1$ case.

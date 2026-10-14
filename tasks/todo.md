@@ -134,7 +134,7 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   Acceptance: round-trip grid → PhaseMask applies to BandField; analytic
   closure rebuilds a beamline deterministically. Scope: M. Deps: 9.2.
 
-- [ ] **9.4 Observation + renderer** — `Observation`: flat f64 intensity
+- [x] **9.4 Observation + renderer** — `Observation`: flat f64 intensity
   stack over (λ-bin, field-sample) + optional derivative channels
   (∂x, ∂y via analytic derivative source fields; ∂λ via central differences)
   + grid metadata; numpy-transferable layout (documented strides).

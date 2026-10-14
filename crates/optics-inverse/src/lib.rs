@@ -35,10 +35,12 @@
 
 pub mod carrier;
 pub mod error;
+pub mod observe;
 pub mod params;
 
 pub use carrier::{Carrier, Design, Step};
 pub use error::InverseError;
+pub use observe::{Channel, Derivatives, Observation, Renderer};
 pub use params::{Param, Params};
 
 /// Crate result alias.
