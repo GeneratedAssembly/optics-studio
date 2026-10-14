@@ -119,7 +119,7 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   lib.rs module skeleton + crate docs. Acceptance: `cargo test --workspace`
   green with empty crate. Scope: S. Deps: none.
 
-- [ ] **9.2 Parameter & design-space types** — `Param { name, lo, hi, init,
+- [x] **9.2 Parameter & design-space types** — `Param { name, lo, hi, init,
   fd_step }`; `Params` bounded vector: validation (non-finite, out-of-range
   → `InvalidParams` at apply, never panics — precedent: core InvalidMedium),
   clamp vs reject policy documented, `random(&mut rng)` init, FD step

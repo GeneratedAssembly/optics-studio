@@ -9,6 +9,10 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- `optics-inverse` (new crate): `Param`/`Params` — the bounded design-space
+  vector all solvers see: closed `[lo, hi]` bounds, per-slot FD step
+  (default 1e-4·span), validate-at-apply (never panics), clamp policy,
+  seeded `randomize`. (Phase-9 task 9.2.)
 - `Material::sellmeier_book1(constant, terms)` (core): generalized Book-1
   form $n^2 = C_0 + \sum B\lambda^2/(\lambda^2 - C)$ — required by the
   H.H. Li (1980) CaF2 parameterization; `sellmeier` is the $C_0 = 1$ case.

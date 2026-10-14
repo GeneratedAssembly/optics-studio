@@ -34,8 +34,10 @@
 //! `InverseError` at apply time — never a panic.
 
 pub mod error;
+pub mod params;
 
 pub use error::InverseError;
+pub use params::{Param, Params};
 
 /// Crate result alias.
 pub type Result<T> = std::result::Result<T, InverseError>;
