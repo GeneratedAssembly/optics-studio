@@ -4,7 +4,8 @@
 
 The goal is a headless wave-optics **forward-modelling + inverse-design**
 suite comparable in feature scope to Zemax OpticStudio, organized as a cargo
-workspace of cooperating crates. The core physics crate (`optics-rs` v0.6.0, renamed `optics-core` at Phase 7 start)
+workspace of cooperating crates. The core physics crate (`optics-core`,
+renamed from `optics-rs` at Phase 7 and released at 0.7.0)
 already delivers coherent scalar propagation (ASM/Fresnel/Fraunhofer/RS-I),
 thin and thick refractive/diffractive elements, apertures/gratings/wedges,
 Gaussian/HG/LG/point sources, and PSF composition, all validated against the

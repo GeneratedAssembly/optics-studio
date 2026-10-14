@@ -1,8 +1,9 @@
 # Task List — optics-rs Forward/Inverse Suite
 
-Ordered per `tasks/plan.md`. Phase 7 tasks are implementation-ready;
-Phase 8 tasks are concrete but gated on plan Open Questions 1/5; Phases 9–10
-are epics to be re-decomposed into S/M tasks at their own planning check-in
+Ordered per `tasks/plan.md`. Phase 7 is delivered (core 0.7.0, `b3f2aa1`);
+Phase 8 is delivered (`optics-zemax` 0.1.0, `bacf5db`) — its former gate on
+plan Open Questions 1/5 is resolved (plan.md Resolved Decisions 1/5/6);
+Phases 9–10 are epics to be re-decomposed into S/M tasks at their own planning check-in
 (agents.md §6). Every core-crate task follows the established discipline:
 physics verified against the textbook PDF first, gates
 (`cargo fmt --check && cargo clippy -q --all-targets -- -D warnings &&
@@ -10,7 +11,7 @@ cargo doc -q --no-deps && cargo test`), approval before each commit.
 
 ## Phase 7 — Core forward-physics close-out (optics-core → 0.7.0)
 
-- [ ] **Task 7.0: Rename crate optics-rs → optics-core**
+- [x] **Task 7.0: Rename crate optics-rs → optics-core** (delivered `ba005d6`)
   Package/crate name change (`core` is a reserved collision with the
   built-in core crate). Mechanical: `Cargo.toml` name, `use
   optics_rs::…` → `use optics_core::…` across tests/examples/doctests,
@@ -55,26 +56,29 @@ cargo doc -q --no-deps && cargo test`), approval before each commit.
   on-grid. Verification: unit tests + gates. Deps: none. Files:
   `src/analysis.rs`, tests. Scope: M.
 
-- [ ] **Task 7.5: Paraxial tilt/decenter on refractive surfaces (OPEN Q1)**
+- [x] **Task 7.5: Paraxial tilt/decenter on refractive surfaces (resolved: plan.md Decision 1)**
   Add small-angle tilt (τx, τy) to `RefractiveSurface`/`ThickLens`: sag
   acquires + τx·x′ − τy·y′ (linear term ⇒ wedge-like deflection
   (n₂−n₁)τ); decenter already exists via `center`. Acceptance: tilt τ
   reproduces wedge deflection law within paraxial tolerance; validation of
-  finiteness; docs + physics.md §9.7 update. GATE: only if Open Question 1
-  resolves "core" — else move to Phase 8 mapping. Deps: none. Scope: M.
+  finiteness; docs + physics.md §9.7 update. Resolved by plan.md Resolved
+  Decision 1 (paraxial tilt in core now); delivered `d23e000`.
+  Deps: none. Scope: M.
 
-- [ ] **Task 7.6: Core-complete freeze + release 0.7.0**
+- [x] **Task 7.6: Core-complete freeze + release 0.7.0** (delivered `b3f2aa1`)
   Docs (physics/architecture/CHANGELOG), roadmap hook marks core
   forward-physics COMPLETE (remaining: mirrors/waveplates/oblique/vector
   stay out-of-scope-by-design), version cut per established pattern.
   Scope: S. Deps: 7.1–7.5.
 
 ### Checkpoint: Core complete (after 7.6)
-- [ ] Full gates green; 0.7.0 tagged in CHANGELOG
+- [x] Full gates green; 0.7.0 tagged in CHANGELOG
 - [ ] Public API reviewed as the stable base for dependent crates
-- [ ] Review with human before Phase 8 (workspace restructure)
+- [ ] Review with human before Phase 8 (workspace restructure) — overtaken
+  by events: Phase 8 shipped (`bacf5db`) and Phase 9 is already running;
+  kept open for the human path.
 
-## Phase 8 — Zemax import (optics-zemax → 0.1.0) — GATE: Open Q1/Q5
+## Phase 8 — Zemax import (optics-zemax → 0.1.0) — delivered; former Open Q1/Q5 gate resolved (plan.md Resolved Decisions 1/5/6)
 
 - [x] **Task 8.1: Workspace restructure** — root `Cargo.toml` gains
   `[workspace] members = [".", "crates/optics-zemax"]` (exclude-default for
