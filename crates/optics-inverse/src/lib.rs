@@ -33,9 +33,11 @@
 //! never see design structure. All validation surfaces as
 //! `InverseError` at apply time — never a panic.
 
+pub mod carrier;
 pub mod error;
 pub mod params;
 
+pub use carrier::{Carrier, Design, Step};
 pub use error::InverseError;
 pub use params::{Param, Params};
 

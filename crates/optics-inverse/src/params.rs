@@ -124,6 +124,37 @@ impl Params {
         }
     }
 
+    /// `count` identical slots `prefix0 .. prefix{count-1}` sharing bounds
+    /// and initial value — the grid carriers' parameter shape.
+    pub fn uniform(count: usize, lo: f64, hi: f64, value: f64, prefix: &str) -> Self {
+        Self {
+            slots: (0..count)
+                .map(|k| Param::new(format!("{prefix}{k}"), lo, hi, value))
+                .collect(),
+        }
+    }
+
+    /// Validate an external value vector against this design space:
+    /// dimension first, then per-slot finiteness and bounds (using each
+    /// slot's name). This is the apply-time check carriers run before
+    /// building a design.
+    pub fn validate_values(&self, values: &[f64]) -> Result<(), InverseError> {
+        if values.len() != self.dim() {
+            return Err(InverseError::WrongDimension {
+                expected: self.dim(),
+                actual: values.len(),
+            });
+        }
+        for (slot, &v) in self.slots.iter().zip(values) {
+            let probe = Param {
+                value: v,
+                ..slot.clone()
+            };
+            probe.validate()?;
+        }
+        Ok(())
+    }
+
     /// Number of tunable degrees of freedom.
     pub fn dim(&self) -> usize {
         self.slots.len()

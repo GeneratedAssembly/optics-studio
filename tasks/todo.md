@@ -126,7 +126,7 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   defaults (relative to span). Pure data, no solver machinery. Scope: S.
   Deps: 9.1.
 
-- [ ] **9.3 Carriers** — `Carrier` design objects: `Analytic` (params →
+- [x] **9.3 Carriers** — `Carrier` design objects: `Analytic` (params →
   closure builds owned `Beamline`/surfaces — the zemax `plan` two-phase
   pattern reused as shape, not type) and `GridPhase` (params → sampled
   phase grid → `PhaseMask::grid`; thickness form h(x,y) → phase
