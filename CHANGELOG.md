@@ -7,6 +7,90 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+Phase 6: thick elements — `RefractiveSurface` with Zemax standard-surface
+sag profiles (sphere/conic/even-asphere/analytic), medium-aware ASM
+(`AsmConfig::medium`), `Beamline` per-step media (`push_medium`, `gap`)
+composing the Zemax-faithful surface → glass → surface stack (thick-lens
+Eq. 4.1 validated), `ThickLens` single-plane convenience (Eq. 4.17,
+`Extent::Thick` + `Material` consumed, spherical-aberration anchors), and
+the `Wedge` prism; hybrid refractive-DOE achromats validated.
+
+### Decisions (approved in planning check-ins, 2026-10-14, Phase 6)
+
+- **Zemax import as model driver** (user requirement): the primary thick-
+  lens representation is the composition surface → medium step → surface
+  (a prescription row maps 1:1 to `RefractiveSurface` + `Beamline` step);
+  `ThickLens` is a demoted single-plane convenience (thin-lens law +
+  exact-profile aberrations, no principal-plane separation). A future
+  `zemax` parse layer needs no model changes.
+- **Surface screens are scalar normal-incidence phase plates**: no Fresnel
+  amplitude coefficients, no polarization; valid at small angles and
+  moderate $|n-1|$ phase strengths. Documented limitation.
+- **Mirrors and waveplates deferred** (planning decision 2, user-delegated):
+  mirrors require an axis fold (retro-propagation breaks the single
+  forward-$z$ model); waveplates require vector fields (polarization is
+  locked out of scope).
+- **Eq. 4.1 bracket re-verified against the rendered PDF page**: the
+  (n−1) factor multiplies the whole bracket incl. the thickness term
+  (text-extraction layout had misplaced it); matrix-optics BFL
+  $\Phi = \Phi_1 + \Phi_2 - (t/n)\Phi_1\Phi_2$,
+  BFL $= (1 - (t/n)\Phi_1)/\Phi$ is the validated anchor.
+- **Beamline closure signature is `(band, z, medium)`** (breaking, task b):
+  medium reaches the caller's engine per step; `push` keeps vacuum 1.0.
+
+### Added
+
+- `SurfaceProfile` + `RefractiveSurface` (Phase 6 task a): Zemax standard-
+  surface sag $z(r) = cr^2/(1+\sqrt{1-(1+k)c^2r^2}) + \sum \alpha_i r^{2i}$
+  (rational form, stable at the vertex; `Spherical`/`Conic`/`EvenAsphere`/
+  `Analytic`), boundary screen $\varphi = k(n_1 - n_2)z(r)$ with dispersive
+  `Material` front/back; `sag`, `vertex_power(lambda)`, `indices_at`,
+  closed-form `worst_phase_step`; conic-domain rejection at construction
+  (`InvalidSurface`), non-finite sag at apply (`InvalidSag`), bad media
+  (`InvalidMedium`). 6 unit tests (golden sags incl. exact paraboloid,
+  Eq. 4.21 plano-convex anchor, taxonomy, validation, guard brackets).
+- Medium-aware ASM (Phase 6 task b, breaking): `AsmConfig::medium` (n),
+  `SamplingReport.medium`, `PropagationError::InvalidMedium`; the whole
+  vacuum machinery runs at $\lambda_n = \lambda/n$ (evanescent cutoff and
+  Matsushima band-limit rise with n; transfer chirp smooths as
+  $\lambda^2/n$ — documented and guarded). Slab piston anchor
+  $e^{ink t}$ bit-exact. 4 unit tests + round trip.
+- `Beamline::push_medium` / `gap(z, n)` (Phase 6 task b): per-step media,
+  engine closure `(band, z, medium)`; thick-lens composition primitive.
+  2 unit tests (per-step medium reaching the closure, gap semantics).
+- `ThickLens` single-plane screen (Phase 6 task c):
+  $\varphi = k(n-1)[t_0 - z_1(\rho) + z_2(\rho)]$ (Eq. 4.17 generalized),
+  vertex piston + thin-lens law + exact-profile spherical aberration;
+  `thickness_profile`, `power_at`/`focal_at`, `worst_phase_step`,
+  first consumer of `Extent::Thick`; `InvalidThickness`. 2 unit tests
+  (piston, exact geometric-sag phase pin, quantified $r^4$ SA residual
+  0.025 rad @ rho=2 mm, zero-thickness degeneration, validation).
+- `Wedge` prism (Phase 6 task c): linear OPD
+  $t = t_0 - \tan\alpha\,(\mathbf{r}'\cdot\hat g)$, mandatory apex
+  `Angle`, `deflection_sine(lambda)` $= -(n-1)\tan\alpha$,
+  `worst_phase_step`, `ElementKind::Prism` in use; `InvalidWedge`. 1 unit
+  test.
+- `tests/phase6.rs` (3 integration tests, task d): surface → 5 mm glass
+  gap → surface stack focuses at the Eq. 4.1 matrix BFL (exit wavefront
+  curvature fit, within 1%, rejecting the thin-lens law by >50% of its
+  2.16 mm offset; geometry calibrated against an independent numpy twin —
+  small apertures put the fit in the truncation-diffraction ripple
+  regime, documented); hybrid refractive+DOE achromat cancels first-order
+  color (<1% power drift 500–600 nm vs >4% uncorrected, Sec. 4.4.1);
+  wedge far-field centroid at $-(n-1)\tan\alpha\cdot z$ (<100 µm @ 2 m).
+- Phase-6 documentation (task e): `physics.md` §9.7 (+§9.6 step shape,
+  §10 screen-model limits, §11 rows 23–25, References Eqs. 4.1–4.3 /
+  4.17–4.21 / Secs. 4.1.5, 4.4.1), `architecture.md` element/asm/beamline/
+  error/testing/roadmap, `lib.rs` blurb.
+
+### Changed
+
+- **Breaking** (Phase 6 task b): `Beamline::trace`/`psf` engine closures
+  take `(band, z, medium)`; steps are `(Option<&dyn Element>, z, medium)`.
+  `AsmConfig`/`SamplingReport` gain a `medium` field (default 1.0 —
+  non-breaking for `..Default::default()` users, struct-literal callers
+  must add it).
+
 ## [0.5.0] - 2026-10-13
 
 Phase 5: sources & output — Hermite-Gauss and Laguerre-Gauss mode

@@ -1,12 +1,14 @@
 # Physics — Wave-Optics Propagation in `optics-rs`
 
 This document details the mathematical models, transfer functions, and
-validity regimes implemented in Phases 1–5 (ASM exact; Fresnel transfer-
-function and convolution forms; Fraunhofer far field; Rayleigh–Sommerfeld
-first kind; regime guidance; thin elements — apertures, dispersive thin
-lens, phase-mask DOE interface (analytic and sampled), blazed grating —
-and sources: Gaussian/Hermite-Gauss/Laguerre-Gauss beams and the
-point-source spherical wave, composed into PSF pipelines by `beamline`).
+validity regimes implemented in Phases 1–6 (ASM exact, in vacuum or
+refractive media; Fresnel transfer-function and convolution forms;
+Fraunhofer far field; Rayleigh–Sommerfeld first kind; regime guidance;
+thin elements — apertures, dispersive thin lens, phase-mask DOE interface
+(analytic and sampled), blazed grating — refractive surfaces and thick
+lenses with Zemax standard-surface profiles, wedge prisms; and sources:
+Gaussian/Hermite-Gauss/Laguerre-Gauss beams and the point-source
+spherical wave, composed into PSF pipelines by `beamline`).
 The ultimate source of truth is
 *Diffractive Optics: Design, Fabrication, and Test* (SPIE TT95, the textbook
 PDF at the repository root); references below use its numbering.
@@ -554,11 +556,81 @@ Fresnel-TF on the same input (validated $<10^{-3}$); the absolute
 convention pins are the exact-$kr/r$ anchors and the near-axis expansion.
 
 **PSF composition** (`beamline`): tracing a point source or tilted plane
-wave through `(element, z)` steps and taking $I = |u|^2$ is the coherent
-PSF — classical imaging anchors validated in `tests/phase5.rs` (§11 rows
-20–22): Airy of the pupil stop, focal shift $x = f\tan\theta$ of a tilted
-plane wave, and the lens-equation image $d_i = f d_o/(d_o - f)$ with
-magnification $-d_i/d_o$ for an off-axis point.
+wave through `(element, z, medium)` steps and taking $I = |u|^2$ is the
+coherent PSF — classical imaging anchors validated in `tests/phase5.rs`
+(§11 rows 20–22): Airy of the pupil stop, focal shift $x = f\tan\theta$ of
+a tilted plane wave, and the lens-equation image $d_i = f d_o/(d_o - f)$
+with magnification $-d_i/d_o$ for an off-axis point.
+
+### 9.7 Refractive surfaces, thick lenses, and media (Phase 6)
+
+`RefractiveSurface` is the Zemax-import primitive: a curved boundary
+between media $n_1$ (front) and $n_2$ (back), modeled as a local phase
+screen at its vertex plane,
+
+$$\varphi(\rho; \lambda) = \frac{2\pi}{\lambda}\,[n_1(\lambda) - n_2(\lambda)]\,z(\rho),$$
+
+with $z(\rho)$ the surface sag in the **Zemax standard-surface form**
+(rational conic + even polynomial, numerically stable at the vertex):
+
+$$z(r) = \frac{c\,r^2}{1 + \sqrt{1 - (1+k)c^2 r^2}} + \sum_{i\ge2}\alpha_i r^{2i}, \qquad c = \frac{1}{R},$$
+
+($k=0$ sphere, $k=-1$ paraboloid; the paraxial sag $r^2/2R$ is the book's
+"sag equation", Sec. 4.2.2, Eq. 4.18). Sign convention: $R > 0$ bulges
+toward $+z$ (direction of propagation); a convex surface into a denser
+medium converges (the OPL argument gives the $n_1 - n_2$ sign; the
+paraxial quadratic is $-k\rho^2\Phi/2$ with standard surface power
+$\Phi = (n_2 - n_1)c$, Eqs. 4.3/4.21). Vertex piston is zero; the stop,
+orientation, and `worst_phase_step` follow the element conventions
+(§9.1–9.2). Construction rejects profiles whose conic domain is breached
+by the stop (`InvalidSurface`); runtime rejects non-finite sags
+(`InvalidSag`).
+
+`ThickLens` is the single-plane convenience form: the glass thickness
+profile $t(\rho) = t_0 - z_1(\rho) + z_2(\rho)$ painted as one screen,
+$\varphi = k(n-1)t(\rho)$ — textbook Eq. 4.17 generalized to exact sag
+profiles. The vertex term $k(n-1)t_0$ is the on-axis glass OPD (Eq. 4.17
+itself); the paraxial quadratic is the thin-lens law
+$1/f = (n-1)(c_1 - c_2)$ (Eq. 4.2); the $r^4$ sag terms give real
+spherical aberration (marginal rays focus short, Sec. 4.1.5 — pinned
+quantitatively: the paraxial-vs-exact phase residual at $\rho = 2$ mm is
+0.025 rad in the unit test). **What the single-plane model cannot carry:**
+principal-plane separation and the thickness term of the full lensmaker
+Eq. 4.1 — those need propagation *inside* the glass, so the primary
+thick-lens model is the composition
+
+$$\text{surface}_1 \;\to\; \texttt{gap}(t_0, n) \;\to\; \text{surface}_2,$$
+
+which reproduces Eq. 4.1 including the $t(n-1)c_1c_2/n$ term (validated
+against the back-focal-length wavefront-curvature fit, §11 row 23 — the
+measured BFL lands within 1% of the matrix-optics value, 5.4% away from
+the thin-lens law). This is also the Zemax-faithful path: a prescription
+row is exactly (sag, thickness, glass).
+
+**Medium-aware ASM** (`AsmConfig::medium`, $n$): inside a medium of index
+$n$ the wavenumber is $nk$ and the direction cosine of bin $f$ is
+$\lambda f/n$, so the transfer function is the vacuum machinery with
+$\lambda \to \lambda_n = \lambda/n$:
+$H_n = \exp\!\big(i\,nkz\sqrt{1 - (\lambda f_x/n)^2 - (\lambda f_y/n)^2}\big)$;
+the evanescent cutoff rises to $n/\lambda$ and the Matsushima band-limit
+scales by $n$ (the transfer function gets *smoother* in frequency — the
+paraxial chirp coefficient scales as $\lambda^2/n$). The slab anchor: a
+normal-incidence plane wave through thickness $t$ picks up $e^{ink t}$ —
+optical path $nt$, piston $k(n-1)t$ relative to vacuum (validated
+bit-exactly).
+
+`Wedge` (prism): two plane surfaces at apex angle $\alpha$, thickness
+$t = t_0 - \tan\alpha\,(\mathbf{r}'\cdot\hat g)$ along the mandatory apex
+direction $\hat g$ — a linear OPD ramp deflecting a plane wave to
+$\sin\theta = -(n-1)\tan\alpha$ toward the base (exact as a plane-wave
+tilt; validated in the far field, §11 row 25).
+
+**Hybrid achromats** (Sec. 4.4.1): a refractive power (blue-stronger,
+Sec. 4.1.3) paired with a wavelength-independent DOE phase screen whose
+equivalent power goes $\Phi_d \propto \lambda$ (blue-weaker) cancels
+first-order color at the design wavelength — same-sign powers allowed,
+unlike the all-refractive doublet of Eq. 4.11 (validated: <1% residual
+power drift over 500–600 nm vs >4% uncorrected, §11 row 24).
 
 ## 10. Validity regime and limitations
 
@@ -590,8 +662,13 @@ magnification $-d_i/d_o$ for an off-axis point.
   spherical wave's hard window edge bounds any absolute-field comparison
   (§9.6 caveat). PSF work is headless: intensity grids only — plotting and
   serialization live in the front-end project (Phase-5 decision 1).
+- Refractive surfaces (§9.7) are scalar normal-incidence phase screens:
+  no Fresnel amplitude coefficients, no polarization, no angle-dependent
+  transmission; valid for small angles and $|n-1| \ll 1$-scale phase
+  strengths. Mirrors (need an axis fold) and waveplates (need vector
+  fields) are deliberately deferred (Phase-6 decision).
 
-## 11. Verification mapping (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`, `tests/phase4.rs`, `tests/phase5.rs`)
+## 11. Verification mapping (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`, `tests/phase4.rs`, `tests/phase5.rs`, `tests/phase6.rs`)
 
 | # | Test | Physics statement | Analytic anchor | Tolerance |
 |---|---|---|---|---|
@@ -617,6 +694,9 @@ magnification $-d_i/d_o$ for an off-axis point.
 | 20 | PSF is Airy (phase5) | stopped pupil traced through `Beamline::psf` = circular-aperture far field | $[2J_1(v)/v]^2$; $r_1 = 1.22\lambda z/2a$ | full profile $< 3\%$, central lobe $< 2\%$, $r_1$ $\pm 2$ bins |
 | 21 | Focal shift vs field angle (phase5) | tilted plane wave through lens focuses at $x = f\tan\theta$ | $1.22\lambda f/2a$ spot, centroid estimator | centroid $< 20\,\mu$m; on-axis $\to$ origin |
 | 22 | Point source images geometrically (phase5) | off-axis spherical wave through lens $\to$ image at $d_i = fd_o/(d_o-f)$, $m = -d_i/d_o$ | lens equation + magnification | centroid $< 20\,\mu$m; peak $> 10\times$ mean |
+| 23 | Thick stack = Eq. 4.1 BFL (phase6) | surface $\to$ medium gap $\to$ surface focuses at the full thick-lens back focal length | Eq. 4.1 (bracketed, incl. $t(n-1)c_1c_2/n$) + matrix BFL | fit within 1%; $>50\%$ of the 2.16 mm thin-law gap |
+| 24 | Hybrid achromat (phase6) | refractive + fixed-DOE screen cancel first-order color | Sec. 4.4.1; $\Phi_d = -\lambda_0\,d\Phi_r/d\lambda$ | corrected $<1\%$ over 500–600 nm vs $>4\%$ uncorrected |
+| 25 | Wedge deflects to base (phase6) | far-field centroid at $\sin\theta = -(n-1)\tan\alpha$ | prism law via plane-wave tilt | $< 10^{-4}$ m at $z = 2$ m |
 
 Sources/mode physics additionally pinned by unit tests in `src/sources.rs`:
 HG/LG eigenfunction propagation through Fresnel-TF and ASM ($<10^{-3}$),
@@ -636,6 +716,12 @@ RS physics additionally pinned in `src/propagation/rayleigh_sommerfeld.rs`:
 paraxial kernel reduction $=$ Fresnel kernel ($<10^{-6}$), bit-exact
 conjugate mirror, delta input $=$ sampled kernel ($10^{-12}$), guard
 closed-form brackets a brute-force sweep, RS $\equiv$ ASM on a smooth band.
+Phase-6 additions: Zemax standard-sag golden values and the exact
+geometric-sphere cross-check, surface power / plano-convex $f = R/(n-1)$
+(Eq. 4.21), ThickLens vertex piston (Eq. 4.17) and the quantified $r^4$
+spherical-aberration residual, conic-domain and media validation, slab
+piston $e^{ink t}$ and band-limit/guard scaling with $n$, wedge ramp
+gradient and deflection sign.
 
 ## References
 
@@ -646,10 +732,15 @@ closed-form brackets a brute-force sweep, RS $\equiv$ ASM on a smooth band.
    aperture), Sec. 2.2.2 + Ch. 3 (RS $\leftrightarrow$ plane-wave-spectrum
    identification), Eqs. 2.9, 3.5–3.13 (plane-wave basis, direction
    cosines), Sec. 2.4 + Eqs. 2.25–2.29 (blazed grating,
-   order angles and efficiencies), Sec. 2.5 (shadowing), Sec. 4.1.3
-   (chromatic aberration: refractive power $\propto (n-1)c$), Sec. 4.2.1 +
+   order angles and efficiencies), Sec. 2.5 (shadowing), Sec. 4.1.2 +
+   Eqs. 4.1–4.3 (thick/thin lensmaker, surface power $\Phi=(n-1)c$ —
+   Eq. 4.1's bracket re-verified against the rendered page), Sec. 4.1.3
+   (chromatic aberration: refractive power $\propto (n-1)c$), Sec. 4.1.5
+   (spherical aberration: LSA/TSA, ray-intercept curve), Sec. 4.2.1 +
    Eqs. 4.12–4.13 (diffractive lens = quadratic phase, zone radii
-   $r_p^2 = 2fp\lambda$), Eq. 5.1 (grating equation in design context),
+   $r_p^2 = 2fp\lambda$), Sec. 4.2.2 + Eqs. 4.17–4.21 (phase from sag
+   profile, OPD $=(n-1)r^2/2R$), Sec. 4.4.1 (diffractive surfaces for
+   color correction), Eq. 5.1 (grating equation in design context),
    Sec. 11.2 (Gaussian beams as beam-shaper input).
 2. N. Matsushima and T. Shimobaba, "Band-limited angular spectrum method for
    numerical simulation of free-space propagation in close and far fields,"

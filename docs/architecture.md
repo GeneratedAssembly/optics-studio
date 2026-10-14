@@ -1,10 +1,11 @@
 # Architecture — `optics-rs`
 
 Module map, data flow, trait specs, and error taxonomy for the Diffractive
-Optics Engineering Suite (Phases 1–5: field representation, ASM/Fresnel/
-Fraunhofer/Rayleigh–Sommerfeld propagation + regime guidance, thin element
-library, `sources` initializers incl. HG/LG modes and the point source,
-and `beamline` PSF composition).
+Optics Engineering Suite (Phases 1–6: field representation, ASM/Fresnel/
+Fraunhofer/Rayleigh–Sommerfeld propagation (ASM in vacuum or media) +
+regime guidance, thin element library incl. refractive surfaces, thick
+lenses, and wedges, `sources` initializers incl. HG/LG modes and the
+point source, and `beamline` PSF composition).
 The physics rationale lives in [`physics.md`](physics.md); development
 protocol in [`../agents.md`](../agents.md).
 
@@ -23,7 +24,7 @@ protocol in [`../agents.md`](../agents.md).
                       │
         propagation ──┼──→ field (algorithms over BandField)
             ├── fft        (private layer: rustfft wrapper, conventions)
-            ├── asm        (exact Angular Spectrum)
+            ├── asm        (exact Angular Spectrum; vacuum or medium n)
             ├── fresnel    (paraxial: transfer function + convolution)
             ├── fraunhofer (far-field FT, regime-gated)
             ├── rayleigh_sommerfeld (exact RS-I spherical kernel, convolution)
@@ -46,7 +47,7 @@ engine supplied as a closure so per-engine configs and errors stay open.
 | `common` | Angle newtype (radians, derefs to f64), `J` imaginary unit | `Angle`, `J` |
 | `wave` | Scalar source/beam parameter records (pre-sampling) | `Wavelength`, `Polarization`, `Wave` |
 | `field` | Complex sample grids; wavelength decoupled from geometry | `Field`, `BandField`, `FieldError` |
-| `element` | Local field transformations; element taxonomy | `Element` trait, `EllipticalAperture`, `RectangularAperture`, `ThinLens`, `PhaseMask`, `SampledPhase`, `BlazedGrating`, `ClearAperture`, `OpticsError`, `ElementShape`, `ElementKind`, `Extent`, `Material` |
+| `element` | Local field transformations; element taxonomy | `Element` trait, `EllipticalAperture`, `RectangularAperture`, `ThinLens`, `PhaseMask`, `SampledPhase`, `BlazedGrating`, `RefractiveSurface`, `SurfaceProfile`, `ThickLens`, `Wedge`, `ClearAperture`, `OpticsError`, `ElementShape`, `ElementKind`, `Extent`, `Material` |
 | `sources` | Closed-form field initializers → `BandField` | `GaussianBeam`, `gaussian`, `HermiteGaussBeam`, `hermite_gauss`, `LaguerreGaussBeam`, `laguerre_gauss`, `spherical`, `MAX_MODE_ORDER`, `SourcesError` |
 | `propagation` | Wave-optics engines + regime diagnostics | `asm`, `fresnel`, `fraunhofer`, `rayleigh_sommerfeld`, `regime` (public); `fft` (private) |
 | `beamline` | Composition sugar over the above | `Beamline`, `Psf`, `BeamlineError` |
@@ -92,7 +93,7 @@ non-finite wraps to NaN and is rejected by constructors. Mirrors (Phase 6)
 must adopt the same pattern. Rotated non-circular stops report bounding-box
 half-extents in `OutsideField`.
 
-Concrete elements (physics: `physics.md` §9.1–9.4):
+Concrete elements (physics: `physics.md` §9.1–9.4, §9.7):
 
 - `EllipticalAperture` — hard-edge binary mask, semi-axes $(a, b)$, with the
   **circle as the axis-symmetric special case** (`circle()`,
@@ -121,6 +122,23 @@ Concrete elements (physics: `physics.md` §9.1–9.4):
   \cdot\hat g/\Lambda) \bmod 1)$ with period $\Lambda$, depth $\Phi$,
   mandatory vector orientation ψ, `ClearAperture` stop; `kinoform()` sugar
   ($\Phi = 2\pi$); `worst_phase_step` ramp bound for period-Nyquist checks.
+- `RefractiveSurface` — the Zemax-import primitive (Phase 6 task a): curved
+  boundary between `Material` front/back media as a local screen
+  $\varphi = k(n_1 - n_2)z(r)$ with `SurfaceProfile` sag —
+  `Spherical`/`Conic`/`EvenAsphere` (Zemax standard-surface rational form
+  + even polynomial) or `Analytic` closure; `sag`, `vertex_power(lambda)`,
+  `worst_phase_step`; construction rejects conic domains breached by the
+  stop (`InvalidSurface`), runtime rejects non-finite sags (`InvalidSag`)
+  and bad media (`InvalidMedium`).
+- `ThickLens` — single-plane convenience screen $\varphi = k(n-1)t(\rho)$
+  (physics.md §9.7): vertex piston Eq. 4.17, thin-lens law + exact-profile
+  spherical aberration; `thickness_profile`, `power_at`/`focal_at`,
+  `Extent::Thick { aperture, thickness }` (first consumer); the
+  Zemax-faithful thick lens is composed as surface → medium `gap` →
+  surface (reproduces Eq. 4.1 incl. the thickness term).
+- `Wedge` — prism screen $t = t_0 - \tan\alpha\,(\mathbf{r}'\cdot\hat g)$
+  with mandatory apex-direction `Angle` (grating pattern); deflects to
+  $\sin\theta = -(n-1)\tan\alpha$ toward the base; `ElementKind::Prism`.
 
 `shape`/`kind`/`material`/`extent` accessors are taxonomy metadata;
 `material` is unused by the hard-edge/phase models (index-1 placeholders,
@@ -168,8 +186,11 @@ transparent `FieldError` carry.
   (no consumer ever materialized — display centering is a front-end concern).
 - `asm` (public): exact transfer-function propagation with zero-padding and
   the Matsushima band-limit; closed-form $O(1)$ sampling guard with automatic
-  densification in strict mode. `AsmConfig { padding, band_limited, strict,
-  max_padding }` is structurally extensible: future boundary-condition
+  densification in strict mode. Phase 6 adds `medium` (n): the whole
+  machinery runs at $\lambda_n = \lambda/n$ (evanescent cutoff and band
+  limit rise with n, transfer chirp smooths as $\lambda^2/n$), enabling
+  in-glass gaps. `AsmConfig { padding, band_limited, strict, max_padding,
+  medium }` is structurally extensible: future boundary-condition
   strategies arrive as new fields/variants without changing existing
   behavior.
 - `fresnel` (public): paraxial pair sharing one report/config surface —
@@ -222,12 +243,15 @@ reverse, and never on `element` (composition is caller-side — see §3).
 
 ### 2.5 `beamline` — composition sugar (Phase 5 task c)
 
-`Beamline<'a>` is an ordered `Vec<(&'a dyn Element, f64)>` of
-`(element, z_after)` steps — the loop a caller would write by hand, not a
-new abstraction layer. `trace(&band, propagate_closure)` applies each
-element and propagates nonzero spacings through the **caller-supplied
-engine closure** (`FnMut(&BandField, f64) -> Result<BandField, E>`,
+`Beamline<'a>` is an ordered `Vec<(Option<&'a dyn Element>, f64, f64)>` of
+`(element, z_after, medium)` steps — the loop a caller would write by
+hand, not a new abstraction layer. `trace(&band, propagate_closure)`
+applies each element and propagates nonzero spacings through the
+**caller-supplied engine closure**
+(`FnMut(&BandField, z, medium) -> Result<BandField, E>`,
 $E$: `std::error::Error`); zero spacings skip the engine call entirely.
+`push` = vacuum step; `push_medium` and `gap(z, medium)` (Phase 6) carry
+refractive indices so thick lenses compose surface → glass → surface.
 A closure rather than an engine enum: per-engine configs differ and the
 engine-error unification remains an open decision — the beamline API is
 stable as engines are added. `psf(&band, closure)` returns `Psf`: the
@@ -275,9 +299,9 @@ proactively via the `*_report` functions.
 | Type | Module | Variants |
 |---|---|---|
 | `FieldError` | `field` | `EmptyGrid`, `DimensionMismatch { len, expected }`, `NonPositivePitch { dx, dy }`, `NonPositiveWavelength(λ)`, `NonFiniteSample` |
-| `OpticsError` | `element` | `InvalidAperture { half_x, half_y, center_x, center_y }` (footprint half-extents, all shapes), `OutsideField { …, grid_half_x, grid_half_y }` (bounding box for rotated stops), `InvalidAxis { center_x, center_y }`, `InvalidFocal { lambda, f }`, `InvalidPhase { x, y, phase }` (first non-finite closure value / sampled grid value, element-frame position), `InvalidGrating { period, depth, orientation }`, `InvalidOrientation { radians }`, `InvalidGrid { nx, ny, len }`, `InvalidGridPitch { dx, dy }` |
+| `OpticsError` | `element` | `InvalidAperture { half_x, half_y, center_x, center_y }` (footprint half-extents, all shapes), `OutsideField { …, grid_half_x, grid_half_y }` (bounding box for rotated stops), `InvalidAxis { center_x, center_y }`, `InvalidFocal { lambda, f }`, `InvalidPhase { x, y, phase }` (first non-finite closure value / sampled grid value, element-frame position), `InvalidGrating { period, depth, orientation }`, `InvalidOrientation { radians }`, `InvalidGrid { nx, ny, len }`, `InvalidGridPitch { dx, dy }`, `InvalidSurface { radius, conic, r }`, `InvalidMedium { n_front, n_back }`, `InvalidSag { r, sag }`, `InvalidThickness { thickness }`, `InvalidWedge { angle, base_thickness }` |
 | `SourcesError` | `sources` | `InvalidBeam { w0, amplitude, cx, cy }`, `InvalidPlane { z }`, `InvalidMode { order, max }`, `InvalidSource { x, y, distance, amplitude }`, `Field(#[from] FieldError)` (transparent grid/wavelength carry) |
-| `PropagationError` | `propagation::asm` | `InvalidDistance(z)` (non-finite only — signed z is valid), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `AliasingRisk { report: Box<SamplingReport> }` |
+| `PropagationError` | `propagation::asm` | `InvalidDistance(z)` (non-finite only — signed z is valid), `InvalidWavelength`, `InvalidMedium(n)` (Phase 6: `AsmConfig::medium` not finite/positive), `EmptyGrid`, `NonFiniteSample`, `AliasingRisk { report: Box<SamplingReport> }` |
 | `FresnelError` | `propagation::fresnel` | same taxonomy; `AliasingRisk { report: Box<FresnelSamplingReport> }` (TF form: post-mitigation failure; convolution form: immediate kernel failure) |
 | `FraunhoferError` | `propagation::fraunhofer` | `InvalidDistance(z)` (non-finite **or zero** — far-field map singular at z=0), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `RegimeViolation { report: Box<FraunhoferReport> }` |
 | `RayleighSommerfeldError` | `propagation::rayleigh_sommerfeld` | `InvalidDistance(z)` (non-finite **or zero** — RS-I kernel is a $\delta$-distribution at z=0), `InvalidWavelength`, `EmptyGrid`, `NonFiniteSample`, `AliasingRisk { report: Box<RayleighSommerfeldSamplingReport> }` (kernel undersampled; immediate — no densification) |
@@ -314,9 +338,9 @@ one propagation-level type is a later API decision.
   cross-engine), `Beamline` (bit-for-bit vs manual chain, zero-spacing skip,
   typed error arms, `Psf` intensity/geometry bookkeeping).
 - **Physical validation** (`tests/asm.rs`, `tests/phase2.rs`, `tests/phase3.rs`,
-  `tests/phase4.rs`, `tests/phase5.rs`;
+  `tests/phase4.rs`, `tests/phase5.rs`, `tests/phase6.rs`;
   shared analytics in `tests/common/mod.rs` — dependency-free quadrature for
-  $J_1$, Fresnel integrals, and the direct RS-I convolution integral): twenty-two
+  $J_1$, Fresnel integrals, and the direct RS-I convolution integral): twenty-five
   analytics-based integration tests with
   stated tolerances — see the mapping table in `physics.md` §11. `tests/phase3.rs`
   validates grating orders through the Fraunhofer engine (kinoform 2π→+1,
@@ -365,9 +389,22 @@ one propagation-level type is a later API decision.
   visualization/export backend (front-end project — the library stays
   headless); the reserved `fft.rs` shift helpers were removed (no
   consumer ever materialized).
-- **Phase 6** (element library expansion — thick elements): thick lens
-  (two surfaces + internal propagation, consuming `Extent::Thick` and the
-  `Material` pair), mirrors, prisms, waveplates as wave-optics models.
+- **Phase 6** (element library expansion — thick elements) — **implemented
+  (tasks a–d), release decision pending**: `RefractiveSurface` with
+  `SurfaceProfile` (Zemax standard-surface sag: sphere/conic/even-asphere/
+  analytic), medium-aware ASM (`AsmConfig::medium`, $\lambda_n$
+  substitution), `Beamline` per-step media (`push_medium`, `gap`) — the
+  Zemax-faithful composition surface → glass → surface reproduces the
+  thick-lens Eq. 4.1 back focal length (`tests/phase6.rs`); `ThickLens`
+  single-plane convenience (Eq. 4.17, `Extent::Thick` + `Material` pair
+  consumed, first spherical aberration anchors); `Wedge` prism
+  ($\sin\theta = -(n-1)\tan\alpha$); hybrid refractive-DOE achromat
+  validated (Sec. 4.4.1). **Deferred with documented reasons:** mirrors
+  (axis fold breaks the single-forward-z model), waveplates (vector
+  fields/polarization out of scope), oblique-incidence Fresnel
+  coefficients (scalar screens only). Next: a `zemax` import layer
+  (prescription parse → surfaces + medium steps) — no model changes
+  needed, format mapping only.
 - **Design TBD (unscheduled)**: Zemax-style interactive front-end (a
   separate project consuming this crate's headless API), inverse solving
   (weighted least-squares DOE design, Gerchberg–Saxton phase retrieval per

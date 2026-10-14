@@ -3,14 +3,16 @@
 //! Wave-optics propagation engine for designing and analyzing diffractive
 //! optical elements: scalar complex fields sampled on 2D grids, advanced
 //! through free space with selectable engines — exact **Angular Spectrum**
-//! (`propagation::asm`), paraxial **Fresnel** in transfer-function and
+//! (`propagation::asm`, in vacuum or refractive media), paraxial
+//! **Fresnel** in transfer-function and
 //! convolution forms (`propagation::fresnel`), the **Fraunhofer** far-field
 //! limit (`propagation::fraunhofer`), and the exact-kernel
 //! **Rayleigh–Sommerfeld** first kind (`propagation::rayleigh_sommerfeld`) —
 //! with sampling guards,
 //! regime diagnostics (`propagation::regime`), and locally acting
 //! [`element::Element`]s (apertures, thin lens, phase masks — the DOE
-//! interface — and blazed gratings, with thick elements in later phases),
+//! interface — blazed gratings, and refractive surfaces/thick lenses/wedges
+//! with Zemax standard-surface sag profiles),
 //! with closed-form field initializers in
 //! [`sources`] (Gaussian, Hermite-Gauss and Laguerre-Gauss modes, and the
 //! point-source spherical wave) producing [`field::BandField`]s ready for
