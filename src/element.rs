@@ -208,6 +208,14 @@ pub enum OpticsError {
         /// Central thickness in meters.
         thickness: f64,
     },
+    /// The surface paraxial tilt (τx, τy) was not finite (radians).
+    #[error("surface tilt must be finite (got tx = {x} rad, ty = {y} rad)")]
+    InvalidTilt {
+        /// Tilt about the y-axis component (rad).
+        x: f64,
+        /// Tilt about the x-axis component (rad).
+        y: f64,
+    },
     /// The wedge apex angle or base thickness was not finite (radians /
     /// meters).
     #[error("invalid wedge: angle = {angle} rad, base thickness = {base_thickness} m")]
@@ -1883,6 +1891,7 @@ pub struct RefractiveSurface {
     profile: SurfaceProfile,
     front: Material,         // medium the beam arrives from
     back: Material,          // medium the beam enters
+    tilt: (f64, f64),        // paraxial tilt (tau_x, tau_y) rad (Phase 7 task 7.5)
     orientation: Angle,      // rad, CCW about z (module docs)
     aperture: ClearAperture, // stop geometry, meters from center
     center: (f64, f64),      // vertex position, meters, field coordinates
@@ -1891,24 +1900,37 @@ pub struct RefractiveSurface {
 
 impl RefractiveSurface {
     /// Refractive surface with sag `profile`, front medium `front`, back
-    /// medium `back`, `orientation` (`None` = typical, normal to $z$),
-    /// clear aperture `aperture`, and vertex at `center` (m, m).
+    /// medium `back`, paraxial `tilt` (`None` = untilted; $(\tau_x, \tau_y)$
+    /// rad adds $+\tau_x x' + \tau_y y'$ to the surface height — prism
+    /// action $\sin\theta = -(n_2-n_1)\tau$, task 7.5), `orientation`
+    /// (`None` = typical, normal to $z$), clear aperture `aperture`, and
+    /// vertex at `center` (m, m).
     ///
     /// # Errors
     /// [`OpticsError::InvalidOrientation`] for a non-finite `Some` angle;
+    /// [`OpticsError::InvalidTilt`] for non-finite tilt components;
     /// [`OpticsError::InvalidSurface`] for non-finite/zero radius,
     /// non-finite conic/coefficients, or a stop whose extent reaches beyond
     /// the conic domain ($1 - (1+k)c^2r^2 < 0$); the aperture/center follow
     /// the shared rules (`InvalidAperture` / `InvalidAxis`).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         profile: SurfaceProfile,
         front: Material,
         back: Material,
+        tilt: Option<(f64, f64)>,
         orientation: Option<Angle>,
         aperture: ClearAperture,
         center: (f64, f64),
     ) -> Result<Self, OpticsError> {
         let orientation = resolve_orientation(orientation)?;
+        let tilt = tilt.unwrap_or((0.0, 0.0));
+        if !tilt.0.is_finite() || !tilt.1.is_finite() {
+            return Err(OpticsError::InvalidTilt {
+                x: tilt.0,
+                y: tilt.1,
+            });
+        }
         profile.validate()?;
         aperture.validate(center)?;
         if let Some(r_max) = aperture.extent_radius() {
@@ -1919,6 +1941,7 @@ impl RefractiveSurface {
             profile,
             front,
             back,
+            tilt,
             orientation,
             aperture,
             center,
@@ -1926,9 +1949,23 @@ impl RefractiveSurface {
         })
     }
 
-    /// Sag height (m) at radial element-frame coordinate `r` (m).
+    /// Profile sag height (m) at radial element-frame coordinate `r` (m)
+    /// — the rotationally symmetric part, excluding tilt.
     pub fn sag(&self, r: f64) -> f64 {
         self.profile.sag(r)
+    }
+
+    /// Paraxial tilt (τx, τy) in radians.
+    pub fn tilt(&self) -> (f64, f64) {
+        self.tilt
+    }
+
+    /// Full surface height (m) at element-frame coordinates `(x, y)`:
+    /// $z = z_{\\text{profile}}(r) + \\tau_x x + \\tau_y y$ (linear tilt
+    /// term, Phase 7 task 7.5 — the Zemax decenter/tilt analog within
+    /// paraxial validity).
+    pub fn surface_z(&self, x: f64, y: f64) -> f64 {
+        self.profile.sag((x * x + y * y).sqrt()) + self.tilt.0 * x + self.tilt.1 * y
     }
 
     /// The surface profile.
@@ -1975,8 +2012,10 @@ impl RefractiveSurface {
         let ry = ay.min(half_y + cy.abs());
         let k = 2.0 * PI / lambda;
         let dn = (n2 - n1).abs();
-        let step_x = k * dn * slope_bound.slope(rx.max(0.0)) * dx;
-        let step_y = k * dn * slope_bound.slope(ry.max(0.0)) * dy;
+        // Tilt adds a constant gradient |tau| along the tilt direction.
+        let tau = (self.tilt.0 * self.tilt.0 + self.tilt.1 * self.tilt.1).sqrt();
+        let step_x = k * dn * (slope_bound.slope(rx.max(0.0)) + tau) * dx;
+        let step_y = k * dn * (slope_bound.slope(ry.max(0.0)) + tau) * dy;
         step_x.max(step_y)
     }
 }
@@ -2050,10 +2089,12 @@ impl Element for RefractiveSurface {
                     *s = Complex64::ZERO;
                     continue;
                 }
-                let r = fx.hypot(fy);
-                let z = self.profile.sag(r);
+                let z = self.surface_z(fx, fy);
                 if !z.is_finite() {
-                    return Err(OpticsError::InvalidSag { r, sag: z });
+                    return Err(OpticsError::InvalidSag {
+                        r: fx.hypot(fy),
+                        sag: z,
+                    });
                 }
                 *s *= ((k * dn * z) * Complex64::I).exp();
             }
@@ -2085,6 +2126,11 @@ impl Element for RefractiveSurface {
 /// is the primary model). Valid for $t_0 \ll f$; both sags are evaluated at
 /// the same plane (paraxial ray heights).
 ///
+/// **Tilt note (task 7.5):** a rigid-body tilt cancels to first order in
+/// the thickness difference, so this screen carries no tilt parameter —
+/// compose tilted [`RefractiveSurface`]s (which do) through a `Beamline`
+/// for tilted elements.
+///
 /// The `material` pair is the glass on both interfaces (surrounding medium
 /// is implicit air, $n_0 = 1$); `extent()` reports
 /// [`Extent::Thick { aperture, thickness }`] — the first consumer of the
@@ -2112,6 +2158,7 @@ impl ThickLens {
     /// [`OpticsError::InvalidOrientation`], [`OpticsError::InvalidSurface`]
     /// (profile parameters or conic domain vs the stop, either surface),
     /// [`OpticsError::InvalidThickness`], and the shared aperture rules.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         front: SurfaceProfile,
         back: SurfaceProfile,
@@ -2274,6 +2321,13 @@ impl Element for ThickLens {
                     continue;
                 }
                 let r = fx.hypot(fy);
+                // NOTE: no tilt parameter by design — a rigid-body tilt
+                // (tau_x, tau_y) adds the SAME linear term to both surface
+                // sags, which cancels identically in the thickness
+                // difference t0 - z1 + z2. Tilt is first-order meaningful
+                // for a single RefractiveSurface (prism action) or a
+                // stack; tilting a composed thick-lens screen requires
+                // composing tilted surfaces, not a screen parameter.
                 let t = self.thickness_profile(r);
                 if !t.is_finite() {
                     return Err(OpticsError::InvalidSag { r, sag: t });
@@ -3797,6 +3851,7 @@ mod tests {
             air(),
             glass(1.5),
             None,
+            None,
             ClearAperture::Circle(2e-3),
             (0.0, 0.0),
         )
@@ -3836,6 +3891,7 @@ mod tests {
             air(),
             glass(1.5),
             None,
+            None,
             ClearAperture::Circle(10e-3),
             (0.0, 0.0),
         )
@@ -3856,6 +3912,7 @@ mod tests {
             SurfaceProfile::Spherical { radius: 1.0 },
             air(),
             glass(1.5),
+            None,
             None,
             ClearAperture::Field,
             (0.0, 0.0),
@@ -3882,6 +3939,7 @@ mod tests {
                 air(),
                 glass(1.5),
                 None,
+                None,
                 ClearAperture::Circle(1e-3),
                 (0.0, 0.0),
             ),
@@ -3896,6 +3954,7 @@ mod tests {
                 air(),
                 glass(1.5),
                 None,
+                None,
                 ClearAperture::Circle(1e-3),
                 (0.0, 0.0),
             ),
@@ -3907,6 +3966,7 @@ mod tests {
             SurfaceProfile::Spherical { radius: 1e-3 },
             air(),
             glass(1.5),
+            None,
             None,
             ClearAperture::Circle(2e-3),
             (0.0, 0.0),
@@ -3921,6 +3981,7 @@ mod tests {
             SurfaceProfile::Spherical { radius: 0.1 },
             air(),
             Material::new(|_l, _a| 0.0, |_l, _a| 0.0),
+            None,
             None,
             ClearAperture::Circle(1e-3),
             (0.0, 0.0),
@@ -3940,6 +4001,7 @@ mod tests {
             air(),
             glass(1.5),
             None,
+            None,
             ClearAperture::Field,
             (0.0, 0.0),
         )
@@ -3958,6 +4020,7 @@ mod tests {
             SurfaceProfile::Spherical { radius: 20e-3 },
             air(),
             glass(1.5),
+            None,
             None,
             ClearAperture::Circle(10e-3),
             (0.0, 0.0),
@@ -3993,6 +4056,7 @@ mod tests {
             SurfaceProfile::Analytic(Box::new(|r| r * r)),
             air(),
             glass(1.5),
+            None,
             None,
             ClearAperture::Circle(1e-3),
             (0.0, 0.0),
@@ -4181,6 +4245,120 @@ mod tests {
         ));
     }
 
+    // --- Paraxial surface tilt (Phase 7, task 7.5). ---
+
+    #[test]
+    fn tilted_surface_reproduces_wedge_prism() {
+        // Air->glass surface with tilt (tau_x, 0) and a TRULY flat profile
+        // (Analytic |r| -> 0) equals a Wedge with tan(alpha) = tau_x, up
+        // to the wedge's constant piston e^{i k (n-1) t0}.
+        let tau = 1e-3f64;
+        let t0 = 0.0; // zero base thickness: piston is exactly unity
+        let lam = lambda();
+        let k = 2.0 * PI / lam;
+        let surf = RefractiveSurface::new(
+            SurfaceProfile::Analytic(Box::new(|_r| 0.0)),
+            air(),
+            glass(1.5),
+            Some((tau, 0.0)),
+            None,
+            ClearAperture::Circle(20e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let wedge = Wedge::new(
+            tau.atan(), // alpha with tan(alpha) = tau
+            glass(1.5),
+            t0,
+            Angle::zero(),
+            ClearAperture::Circle(20e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let band = band_101();
+        let a = surf.apply(&band).unwrap();
+        let b = wedge.apply(&band).unwrap();
+        // Ratio constant across acted samples = piston e^{i k (n-1) t0}.
+        let ratio = b.field().sample(60, 50) / a.field().sample(60, 50);
+        for iy in 40..61 {
+            for ix in 40..61 {
+                let r = b.field().sample(ix, iy) / a.field().sample(ix, iy);
+                assert!((r - ratio).norm() < 1e-12, "piston varies at {ix},{iy}");
+            }
+        }
+        let expect = ((1.5 - 1.0) * k * t0 * Complex64::I).exp();
+        assert!((ratio - expect).norm() < 1e-9, "piston {ratio} vs {expect}");
+        // Nonzero-piston equivalence at representative samples only (the
+        // 2*pi-quantized absolute phase of k(n-1)t0 ~ 6283 rad carries
+        // ~1e-12 fp noise per sample, below any per-pixel tolerance).
+        let t0p = 1e-3;
+        let wedge_p = Wedge::new(
+            tau.atan(),
+            glass(1.5),
+            t0p,
+            Angle::zero(),
+            ClearAperture::Circle(20e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        let bp = wedge_p.apply(&band).unwrap();
+        let rp = bp.field().sample(60, 50) / a.field().sample(60, 50);
+        let exp_p = ((1.5 - 1.0) * k * t0p * Complex64::I).exp();
+        assert!((rp - exp_p).norm() < 1e-9, "piston check {rp} vs {exp_p}");
+        // Deflection direction: phase DECREASES along +x (toward the base).
+        let p0 = a.field().sample(50, 50).arg();
+        let p1 = a.field().sample(60, 50).arg();
+        assert!(wrap(p1 - p0) < 0.0, "tilt must converge toward +x side");
+    }
+
+    #[test]
+    fn tilt_probe_validation_and_guard() {
+        let surf = RefractiveSurface::new(
+            SurfaceProfile::Spherical { radius: 0.05 },
+            air(),
+            glass(1.5),
+            Some((2e-3, -1e-3)),
+            None,
+            ClearAperture::Circle(10e-3),
+            (0.0, 0.0),
+        )
+        .unwrap();
+        // surface_z = profile sag + tau.x x + tau.y y (element frame).
+        let (x, y): (f64, f64) = (3e-3, 4e-3);
+        let r = (x * x + y * y).sqrt();
+        let expect = surf.sag(r) + 2e-3 * x - 1e-3 * y;
+        assert!((surf.surface_z(x, y) - expect).abs() < 1e-18);
+        assert!(surf.tilt() == (2e-3, -1e-3));
+        // Guard bound includes the tilt gradient.
+        let band = band_101();
+        let with = surf.worst_phase_step(&band);
+        let flat = RefractiveSurface::new(
+            SurfaceProfile::Spherical { radius: 0.05 },
+            air(),
+            glass(1.5),
+            None,
+            None,
+            ClearAperture::Circle(10e-3),
+            (0.0, 0.0),
+        )
+        .unwrap()
+        .worst_phase_step(&band);
+        assert!(with > flat, "tilt must raise the sampling bound");
+        // Non-finite tilt rejected at construction.
+        assert!(matches!(
+            RefractiveSurface::new(
+                SurfaceProfile::Spherical { radius: 0.05 },
+                air(),
+                glass(1.5),
+                Some((f64::NAN, 0.0)),
+                None,
+                ClearAperture::Circle(1e-3),
+                (0.0, 0.0),
+            ),
+            Err(OpticsError::InvalidTilt { .. })
+        ));
+    }
+
     // --- Sellmeier materials (Phase 7, task 7.1). ---
 
     fn bk7() -> Material {
@@ -4229,6 +4407,7 @@ mod tests {
             SurfaceProfile::Spherical { radius: 0.1 },
             air(),
             g,
+            None,
             None,
             ClearAperture::Circle(100e-6),
             (0.0, 0.0),

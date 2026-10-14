@@ -85,6 +85,7 @@ fn thick_stack_focuses_at_book_eq_41_back_focal_length() {
         glass(1.0),
         glass(n),
         None,
+        None,
         ClearAperture::Circle(a),
         (0.0, 0.0),
     )
@@ -93,6 +94,7 @@ fn thick_stack_focuses_at_book_eq_41_back_focal_length() {
         SurfaceProfile::Spherical { radius: 1.0 / c2 },
         glass(n),
         glass(1.0),
+        None,
         None,
         ClearAperture::Circle(a),
         (0.0, 0.0),

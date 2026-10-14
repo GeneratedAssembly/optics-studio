@@ -45,8 +45,20 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   `Psf::new` (validating) and `Psf::from_band`; `beamline` re-exports
   `Psf` so the `optics_core::beamline::Psf` path stays live.
 
+- Paraxial surface tilt (Phase 7 task 7.5, breaking):
+  `RefractiveSurface::new` gains a `tilt: Option<(f64, f64)>` parameter
+  (rad; adds $\tau_x x' + \tau_y y'$ to the surface height — prism action
+  $\sin\theta = -(n_2-n_1)\tau$, validated bit-for-bit against `Wedge` at
+  $\tan\alpha = \tau$ with zero-piston equivalence and a sampled piston
+  check); `surface_z(x, y)` / `tilt()` accessors; the guard bound includes
+  $|\tau|$. `ThickLens` deliberately takes NO tilt: a rigid-body tilt
+  cancels identically in the thickness difference (documented; tilted
+  thick elements compose tilted surfaces). `OpticsError::InvalidTilt`.
+
 ### Changed
 
+- **Breaking (Phase 7 task 7.5):** `RefractiveSurface::new` signature
+  gains the `tilt` parameter (position 4); `None` = untilted.
 - **Crate renamed `optics-rs` → `optics-core`** (Phase 7 task 7.0): a crate
   named `core` collides with Rust's built-in core crate in extern-prelude
   paths; the `optics-` prefix is the locked naming rule for the workspace

@@ -122,7 +122,7 @@ Concrete elements (physics: `physics.md` §9.1–9.4, §9.7):
   \cdot\hat g/\Lambda) \bmod 1)$ with period $\Lambda$, depth $\Phi$,
   mandatory vector orientation ψ, `ClearAperture` stop; `kinoform()` sugar
   ($\Phi = 2\pi$); `worst_phase_step` ramp bound for period-Nyquist checks.
-- `RefractiveSurface` — the Zemax-import primitive (Phase 6 task a): curved
+- `RefractiveSurface` — the Zemax-import primitive (Phase 6 task a; paraxial tilt added task 7.5): curved
   boundary between `Material` front/back media as a local screen
   $\varphi = k(n_1 - n_2)z(r)$ with `SurfaceProfile` sag —
   `Spherical`/`Conic`/`EvenAsphere` (Zemax standard-surface rational form
@@ -301,7 +301,7 @@ proactively via the `*_report` functions.
 | Type | Module | Variants |
 |---|---|---|
 | `FieldError` | `field` | `EmptyGrid`, `DimensionMismatch { len, expected }`, `NonPositivePitch { dx, dy }`, `NonPositiveWavelength(λ)`, `NonFiniteSample` |
-| `OpticsError` | `element` | `InvalidAperture { half_x, half_y, center_x, center_y }` (footprint half-extents, all shapes), `OutsideField { …, grid_half_x, grid_half_y }` (bounding box for rotated stops), `InvalidAxis { center_x, center_y }`, `InvalidFocal { lambda, f }`, `InvalidPhase { x, y, phase }` (first non-finite closure value / sampled grid value, element-frame position), `InvalidGrating { period, depth, orientation }`, `InvalidOrientation { radians }`, `InvalidGrid { nx, ny, len }`, `InvalidGridPitch { dx, dy }`, `InvalidSurface { radius, conic, r }`, `InvalidMedium { n_front, n_back }`, `InvalidSag { r, sag }`, `InvalidThickness { thickness }`, `InvalidWedge { angle, base_thickness }` |
+| `OpticsError` | `element` | `InvalidAperture { half_x, half_y, center_x, center_y }` (footprint half-extents, all shapes), `OutsideField { …, grid_half_x, grid_half_y }` (bounding box for rotated stops), `InvalidAxis { center_x, center_y }`, `InvalidFocal { lambda, f }`, `InvalidPhase { x, y, phase }` (first non-finite closure value / sampled grid value, element-frame position), `InvalidGrating { period, depth, orientation }`, `InvalidOrientation { radians }`, `InvalidGrid { nx, ny, len }`, `InvalidGridPitch { dx, dy }`, `InvalidSurface { radius, conic, r }`, `InvalidMedium { n_front, n_back }`, `InvalidSag { r, sag }`, `InvalidThickness { thickness }`, `InvalidWedge { angle, base_thickness }`, `InvalidTilt { x, y }` |
 | `SourcesError` | `sources` | `InvalidBeam { w0, amplitude, cx, cy }`, `InvalidPlane { z }`, `InvalidMode { order, max }`, `InvalidSource { x, y, distance, amplitude }`, `Field(#[from] FieldError)` (transparent grid/wavelength carry) |
 | `PropagationError` | `propagation::asm` | `InvalidDistance(z)` (non-finite only — signed z is valid), `InvalidWavelength`, `InvalidMedium(n)` (Phase 6: `AsmConfig::medium` not finite/positive), `EmptyGrid`, `NonFiniteSample`, `AliasingRisk { report: Box<SamplingReport> }` |
 | `FresnelError` | `propagation::fresnel` | same taxonomy; `AliasingRisk { report: Box<FresnelSamplingReport> }` (TF form: post-mitigation failure; convolution form: immediate kernel failure) |
