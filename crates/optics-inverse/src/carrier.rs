@@ -283,6 +283,17 @@ impl Carrier {
         }
     }
 
+    /// Mutable access to the design space. The UI run console (task 10.3)
+    /// uses this to continue a run in chunks: `Params::set_values(best)`
+    /// between `solve` calls so each chunk starts from the incumbent best
+    /// (`docs/ux/spec.md` §3.4, gap G-2 workaround). Bounds are unchanged.
+    pub fn params_mut(&mut self) -> &mut Params {
+        match self {
+            Self::Analytic { params, .. } => params,
+            Self::GridPhase { grid } | Self::GridThickness { grid, .. } => &mut grid.params,
+        }
+    }
+
     /// Number of tunable degrees of freedom.
     pub fn dim(&self) -> usize {
         self.params().dim()

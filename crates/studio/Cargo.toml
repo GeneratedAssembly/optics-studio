@@ -2,27 +2,45 @@
 name = "optics-studio"
 version = "0.1.0"
 edition = "2024"
-description = "Web UI (dioxus) over the headless optics APIs — PSF/metrics viewport"
+description = "Web UI (dioxus) over the headless optics APIs — PSF/metrics viewport + inverse run controls"
 license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
 optics-core = { path = "../.." }
+optics-inverse = { path = "../optics-inverse" }
 thiserror = "2"
+serde = { version = "1", features = ["derive"] }
 
 # ADR-10.0: the framework tree lives entirely in this crate and only for the
 # wasm target, so native `cargo test -p optics-studio` builds and runs the
-# pure view-model without pulling dioxus (docs/adr-10.0-ui-framework.md).
+# pure view model + run core without pulling dioxus
+# (docs/adr-10.0-ui-framework.md).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 dioxus = { version = "=0.7.10", features = ["web"] }
 wasm-bindgen = "0.2"
+# Solver runs execute in a dedicated web worker with progress messages
+# (ADR-10.0 Q3; worker crate choice was the task 10.3 decision — gloo-worker).
+gloo-worker = "0.6"
+gloo-timers = "0.3"
+js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "Document",
     "Window",
     "Element",
     "HtmlElement",
+    "HtmlCollection",
     "HtmlCanvasElement",
     "CanvasRenderingContext2d",
     "ImageData",
     "CssStyleDeclaration",
 ] }
+# rand (via optics-inverse) pulls getrandom; wasm32-unknown-unknown needs the
+# js backend to compile (docs/ux/spec.md §3.4, ADR-10.0 Q6). The run console
+# always passes seed = Some(..), so this only satisfies the compile-time
+# `thread_rng()` reference in the `seed: None` branch.
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+serde_json = "1"
+bincode = "1.3"

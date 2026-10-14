@@ -9,6 +9,37 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- Phase-10 task 10.3 — **inverse run controls + convergence plot**
+  (`crates/studio`, extends the crate 10.2 created). Host-testable run core
+  (`run/`): `RunJob` — a **serializable** description of one inverse run
+  (design carrier, illumination, observation grid, built-in merit, solver,
+  budget/seed/scale, chunking) that the worker rebuilds into real
+  `optics-inverse` objects (closures cannot cross the worker boundary);
+  grid carriers are wrapped in an analytic relay so the design propagates
+  `z_after` to the detector (the grid builders' own trailing gap is 0).
+  `RunSession` — the **chunked** `solve` loop (spec §3.4, gap G-2): one
+  budget slice per call, carrying `Solution::best` into the next chunk via
+  `Params::set_values`, so Stop is "do not launch the next chunk"; chunk *k*
+  seeds `job.seed + k` (fresh stream per chunk, whole run reproducible);
+  wasm always passes `seed = Some(..)` (ADR-10.0 Q6; `getrandom/js` enabled
+  for the wasm target). `RunController` — pure Idle/Running/Stopping/
+  Finished/Failed machine + accumulated trace + Apply-best continuation +
+  reproducibility run card. Worker bridge (`bridge.rs`, wasm): solver runs
+  in a **dedicated web worker** with progress messages via `gloo-worker`
+  0.6 (ADR-10.0 Q3 — the worker-crate choice this task owned), with an
+  inline main-thread fallback transport yielding between chunks; the module
+  script path is discovered at runtime (bundler-agnostic). Run console UI
+  (`ui/`, dioxus): solver picker (random walk / annealing / Adam),
+  budget/seed/scale/random-init, Start/Stop, log-y SVG convergence plot
+  (`Solution::history`), progress readout, Apply-best, observation config
+  (bands/scenes/derivative channels/ASM) and built-in merit editor; MSE-to-
+  target and Strehl merit *frames* deferred to the viewport (10.2 capture).
+  `ui::App` now composes the 10.2 viewport above the console. `optics-
+  inverse`: new `Carrier::params_mut` accessor (chunked continuation needs
+  mutable design-space access; bounds unchanged). Host tests: 13
+  (`run_controls` + unit); `examples/demo_run.rs` smoke run. Docs:
+  `docs/ux/spec.md` §7 G-2/G-3/G-4 marked resolved for the UI path; solver
+  picker lists Adam. (GitHub #11 / GEN-54.)
 - Phase-10 task 10.2 — **PSF/metrics viewport** in the new `optics-studio`
   crate (`crates/studio`, v0.1.0). Dioxus `=0.7.10` web target, CSR-only,
   with the framework dependency tree gated to `wasm32` so the crate's pure

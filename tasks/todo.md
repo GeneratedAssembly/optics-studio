@@ -257,7 +257,19 @@ Web from the start (resolved decision 4).
   cursor readout, EE/MTF/Strehl/Spot/Wavefront panels, shared scrubber).
   ADR Q4 resolved: 2D ImageData. 55 native unit tests; wasm32 cargo
   check/clippy clean. (GitHub #10 / GEN-53.)
-- [ ] **10.3 Inverse run controls** — start/stop solvers, convergence plot.
+- [x] **10.3 Inverse run controls** — start/stop solvers, convergence plot.
+  -> **delivered**: `crates/studio/src/run` host-testable core (`RunJob`
+  serializable problem description; `RunSession` chunked `solve` loop = gap
+  G-2 workaround via new `Carrier::params_mut`, Stop = "no next chunk",
+  per-chunk seed `job.seed+k`, wasm `seed=Some(..)`; `RunController` pure
+  start/stop machine + run card) + `bridge.rs` dedicated web worker
+  (`gloo-worker`, ADR-10.0 Q3) with inline fallback + `ui/` dioxus run
+  console (solver picker incl. Adam, budget/seed/scale/random-init, Start/
+  Stop, log-y SVG convergence plot, Apply-best continuation, observation
+  config + built-in merit editor). `ui::App` composes the 10.2 viewport above
+  the console. ADR leak guard re-run: `cargo check -p optics-studio --target
+  wasm32-unknown-unknown` clean. 13 host tests + `examples/demo_run.rs`.
+  Spec §7 G-2/G-3/G-4 marked resolved for the UI path. (GitHub #11 / GEN-54.)
 - [ ] **10.4 Release 0.1.0** (`optics-studio`).
 
 ### Checkpoint: Suite complete

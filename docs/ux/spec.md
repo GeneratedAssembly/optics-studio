@@ -14,6 +14,12 @@ against `cargo doc -p optics-core -p optics-zemax -p optics-inverse` at this
 commit. Items that do not exist yet are listed in the **gap register** (§7),
 never invented.
 
+Revision note (task 10.3, 2026-10-14): re-verified against optics-inverse
+0.1.0 — `Solver::Adam` and the 9.7–9.9 surfaces landed since the draft, so
+§7 G-2/G-3/G-4 are marked resolved for the UI path; `Carrier::params_mut`
+was added for the chunked continuation loop. The run console itself ships
+in `crates/studio` (`run/` + `bridge.rs` + `ui/run_console.rs`).
+
 ---
 
 ## 1. Personas
@@ -126,8 +132,9 @@ Steps and their backing APIs:
    `Selector { channel, band, scene }`. Custom user merits (Python/DSL,
    CRLB class) are **not yet available** — gap G-5.
 3. **Configure and run.** `StochasticConfig { budget, seed, initial_scale }`
-   (default budget 2000, seed `Some(0)`), `Solver::RandomWalk { stagnation }`
-   or `Solver::Annealing { t0, t_end_frac }`. Renderer observation channels
+   (default budget 2000, seed `Some(0)`), `Solver::RandomWalk { stagnation }`,
+   `Solver::Annealing { t0, t_end_frac }`, or `Solver::Adam(AdamConfig)`
+   (epoch budget). Renderer observation channels
    selectable via `Derivatives { x, y, lambda }` and `Channel::{Intensity,
    DxDyX, DxDyY, Dlambda}`. Run control (start/stop) is constrained by gap
    G-2 — the UI runs `solve` in chunks on a worker.
@@ -231,7 +238,7 @@ shell/editor.
 
 | Control | Behavior | Backing API |
 |---|---|---|
-| Solver picker | Random walk (stagnation knob) / annealing (t0, t_end_frac) | `optics_inverse::Solver` variants |
+| Solver picker | Random walk (stagnation knob) / annealing (t0, t_end_frac) / Adam (lr_frac, betas, eps, clip; budget counts epochs) | `optics_inverse::Solver` variants |
 | Budget/seed/scale | Numeric fields with defaults from `StochasticConfig::default()` | `StochasticConfig { budget, seed, initial_scale }` |
 | Random-init toggle | Start from a uniform draw in bounds | `solve(..., random_init)` |
 | Start / Stop | Chunked execution: repeated `solve` calls with `budget = chunk`, `random_init = false`, after `Params::set_values(current_best)`; Stop = do not launch the next chunk | `solve`, `Params::set_values`, `Solution::best` |
@@ -396,9 +403,9 @@ slider row.
 | ID | Gap | Affected screens | Suggested resolution (not committed) |
 |---|---|---|---|
 | G-1 | No `.zmx` serializer and no constructor from an edited `ZmxSystem` (`ImportedSystem` fields private; only `parse`/`load` from text) | 10.1 editor persistence | Round-trip edits through the text editor (works today); a writer task if table-mode persistence is wanted |
-| G-2 | `solve()` is synchronous — no progress callback, cancellation token, or streaming history | 10.3 start/stop | Chunked budget loop (spec'd in §3.4); a `solve_with_progress`/cancel API in `optics-inverse` would replace it |
-| G-3 | Solver zoo is partial: only `Solver::RandomWalk` + `Annealing` exist. Gerchberg–Saxton (todo 9.8), FD-Adam (9.7), adjoint (9.9) are not in the public surface yet | 10.3 solver picker | Ship the picker with two solvers; extend when those tasks land |
-| G-4 | No gradient-based solver entry point in `solve` (merit `obs_gradient` seam exists, unused by solvers) | 10.3 | Follows 9.7/9.9 |
+| G-2 | `solve()` is synchronous — no progress callback, cancellation token, or streaming history | 10.3 start/stop | **Resolved for 10.3** by the chunked budget loop in `crates/studio/src/run/session.rs` (spec §3.4): `RunSession` runs one budget slice per `solve` call and carries `best` through `Carrier::params_mut` (new accessor). A native `solve_with_progress`/cancel API in `optics-inverse` would still replace the workaround. |
+| G-3 | Solver zoo is partial: only `Solver::RandomWalk` + `Annealing` exist. Gerchberg–Saxton (todo 9.8), FD-Adam (9.7), adjoint (9.9) are not in the public surface yet | 10.3 solver picker | **Resolved:** `Solver::Adam` (9.7) is now in the public surface and the picker ships Random walk / Annealing / Adam. GS (9.8) and adjoint (9.9) reach the UI in a later task (they are grid-domain, not `Params`-domain, so they do not fit the `solve` chunk loop). |
+| G-4 | No gradient-based solver entry point in `solve` (merit `obs_gradient` seam exists, unused by solvers) | 10.3 | **Resolved for the UI path:** `Solver::Adam` drives FD gradients through `solve`; merit `obs_gradient`/adjoint (`grid_gradient`, 9.9) remain a headless seam for a future grid solver. |
 | G-5 | No custom-merit frontend (Python/DSL, CRLB-class) — planned `optics-inverse` 0.2.0 (todo 9.11/9.12) | 10.3 merit editor | Built-in merits + `Box<dyn Merit>` in-process only for now |
 | G-6 | No reference-PSF generator API for Strehl (must be hand-composed per §3.3) | 10.2 Strehl panel | Candidate core helper `analysis::reference_psf(...)`; file as Phase-10+ request |
 | G-7 | `GridSpec` fields are private — grid geometry cannot be read back from a `Carrier` | 10.1 grid editor | UI caches construction args; accessor on `Carrier`/`GridSpec` if state must survive reload |
