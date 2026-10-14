@@ -16,10 +16,10 @@
 mod common;
 
 use common::LAMBDA;
-use optics_rs::common::Angle;
-use optics_rs::element::{BlazedGrating, ClearAperture, Element};
-use optics_rs::field::BandField;
-use optics_rs::propagation::fraunhofer::{self, FraunhoferConfig};
+use optics_core::common::Angle;
+use optics_core::element::{BlazedGrating, ClearAperture, Element};
+use optics_core::field::BandField;
+use optics_core::propagation::fraunhofer::{self, FraunhoferConfig};
 use std::f64::consts::PI;
 
 // Geometry: input window n*PITCH = 10.24 mm; grating period chosen so the

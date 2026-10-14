@@ -1,4 +1,4 @@
-# Physics — Wave-Optics Propagation in `optics-rs`
+# Physics — Wave-Optics Propagation in `optics-core`
 
 This document details the mathematical models, transfer functions, and
 validity regimes implemented in Phases 1–6 (ASM exact, in vacuum or

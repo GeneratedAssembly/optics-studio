@@ -10,9 +10,9 @@ mod common;
 
 use common::*;
 use num_complex::Complex64;
-use optics_rs::element::{Element, EllipticalAperture};
-use optics_rs::field::{BandField, Field};
-use optics_rs::propagation::{asm, fraunhofer, fresnel, regime};
+use optics_core::element::{Element, EllipticalAperture};
+use optics_core::field::{BandField, Field};
+use optics_core::propagation::{asm, fraunhofer, fresnel, regime};
 use std::f64::consts::PI;
 
 /// Intensity profile averaged over `2*half_rows+1` center rows:

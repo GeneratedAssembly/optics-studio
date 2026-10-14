@@ -10,10 +10,10 @@
 //!
 //! Run: `cargo run --release --example psf_image_convolve`
 
-use optics_rs::beamline::Beamline;
-use optics_rs::element::{ClearAperture, EllipticalAperture, ThinLens};
-use optics_rs::field::BandField;
-use optics_rs::propagation::asm::{AsmConfig, propagate};
+use optics_core::beamline::Beamline;
+use optics_core::element::{ClearAperture, EllipticalAperture, ThinLens};
+use optics_core::field::BandField;
+use optics_core::propagation::asm::{AsmConfig, propagate};
 
 const LAMBDA: f64 = 500e-9;
 const N: usize = 256;

@@ -7,7 +7,7 @@
 #![allow(dead_code)] // Shared toolbox: individual targets use a subset.
 
 use num_complex::Complex64;
-use optics_rs::field::{BandField, Field};
+use optics_core::field::{BandField, Field};
 use std::f64::consts::PI;
 
 pub const LAMBDA: f64 = 500e-9;

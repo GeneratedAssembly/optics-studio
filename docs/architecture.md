@@ -1,4 +1,4 @@
-# Architecture — `optics-rs`
+# Architecture — `optics-core`
 
 Module map, data flow, trait specs, and error taxonomy for the Diffractive
 Optics Engineering Suite (Phases 1–6: field representation, ASM/Fresnel/

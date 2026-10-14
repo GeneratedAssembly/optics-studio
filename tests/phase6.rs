@@ -15,13 +15,13 @@
 //! - a wedge deflects a plane wave to sin(theta) = -(n-1)tan(alpha) toward
 //!   the base, measured through the Fraunhofer engine.
 
-use optics_rs::beamline::Beamline;
-use optics_rs::element::{
+use optics_core::beamline::Beamline;
+use optics_core::element::{
     ClearAperture, Element, Material, PhaseMask, RefractiveSurface, SurfaceProfile, ThinLens, Wedge,
 };
-use optics_rs::field::BandField;
-use optics_rs::propagation::asm::{AsmConfig, propagate as asm_propagate};
-use optics_rs::propagation::fraunhofer::{FraunhoferConfig, propagate as fraunhofer_propagate};
+use optics_core::field::BandField;
+use optics_core::propagation::asm::{AsmConfig, propagate as asm_propagate};
+use optics_core::propagation::fraunhofer::{FraunhoferConfig, propagate as fraunhofer_propagate};
 use std::f64::consts::PI;
 
 const L0: f64 = 550e-9; // design wavelength
@@ -201,7 +201,7 @@ fn wedge_deflects_toward_the_base() {
         alpha,
         glass(1.5),
         1e-3,
-        optics_rs::common::Angle::zero(),
+        optics_core::common::Angle::zero(),
         ClearAperture::Circle(a),
         (0.0, 0.0),
     )

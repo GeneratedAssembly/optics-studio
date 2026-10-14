@@ -1,4 +1,4 @@
-//! # optics-rs — Diffractive Optics Engineering Suite
+//! # optics-core — Diffractive Optics Engineering Suite
 //!
 //! Wave-optics propagation engine for designing and analyzing diffractive
 //! optical elements: scalar complex fields sampled on 2D grids, advanced
@@ -51,9 +51,9 @@
 //! ## Quick start
 //!
 //! ```
-//! use optics_rs::element::{Element, EllipticalAperture};
-//! use optics_rs::field::BandField;
-//! use optics_rs::propagation::asm::{propagate, AsmConfig};
+//! use optics_core::element::{Element, EllipticalAperture};
+//! use optics_core::field::BandField;
+//! use optics_core::propagation::asm::{propagate, AsmConfig};
 //!
 //! // Uniform 500 nm band on a 64 x 64 grid, 20 um pitch (1.28 mm window).
 //! let band = BandField::uniform(1.0, 0.0, 64, 64, 20e-6, 20e-6, 500e-9).unwrap();

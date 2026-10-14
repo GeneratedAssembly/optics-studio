@@ -8,12 +8,12 @@
 mod common;
 
 use common::airy;
-use optics_rs::beamline::Beamline;
-use optics_rs::element::{ClearAperture, EllipticalAperture, ThinLens};
-use optics_rs::field::BandField;
-use optics_rs::propagation::asm::{AsmConfig, propagate as asm_propagate};
-use optics_rs::propagation::fraunhofer::{FraunhoferConfig, propagate as fraunhofer_propagate};
-use optics_rs::sources::spherical;
+use optics_core::beamline::Beamline;
+use optics_core::element::{ClearAperture, EllipticalAperture, ThinLens};
+use optics_core::field::BandField;
+use optics_core::propagation::asm::{AsmConfig, propagate as asm_propagate};
+use optics_core::propagation::fraunhofer::{FraunhoferConfig, propagate as fraunhofer_propagate};
+use optics_core::sources::spherical;
 
 const LAMBDA: f64 = 500e-9;
 

@@ -18,13 +18,13 @@
 mod common;
 
 use common::{LAMBDA, gaussian_band, rs_direct};
-use optics_rs::element::{Element, EllipticalAperture};
-use optics_rs::field::BandField;
-use optics_rs::propagation::asm::{AsmConfig, propagate as asm_propagate};
-use optics_rs::propagation::fresnel::{
+use optics_core::element::{Element, EllipticalAperture};
+use optics_core::field::BandField;
+use optics_core::propagation::asm::{AsmConfig, propagate as asm_propagate};
+use optics_core::propagation::fresnel::{
     FresnelConfig, propagate as fresnel_propagate, sampling_report as fresnel_report,
 };
-use optics_rs::propagation::rayleigh_sommerfeld::{
+use optics_core::propagation::rayleigh_sommerfeld::{
     RayleighSommerfeldConfig, propagate as rs_propagate, sampling_report as rs_report,
 };
 

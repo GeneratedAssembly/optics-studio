@@ -19,9 +19,9 @@
 use std::f64::consts::PI;
 
 use num_complex::Complex64;
-use optics_rs::element::{Element, EllipticalAperture};
-use optics_rs::field::{BandField, Field};
-use optics_rs::propagation::asm::{AsmConfig, PropagationError, propagate, sampling_report};
+use optics_core::element::{Element, EllipticalAperture};
+use optics_core::field::{BandField, Field};
+use optics_core::propagation::asm::{AsmConfig, PropagationError, propagate, sampling_report};
 
 const LAMBDA: f64 = 500e-9; // meters (green)
 

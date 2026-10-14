@@ -9,10 +9,10 @@
 //! caller-supplied closure:
 //!
 //! ```
-//! use optics_rs::beamline::Beamline;
-//! use optics_rs::element::{ClearAperture, Element, EllipticalAperture, ThinLens};
-//! use optics_rs::field::BandField;
-//! use optics_rs::propagation::asm::{propagate, AsmConfig};
+//! use optics_core::beamline::Beamline;
+//! use optics_core::element::{ClearAperture, Element, EllipticalAperture, ThinLens};
+//! use optics_core::field::BandField;
+//! use optics_core::propagation::asm::{propagate, AsmConfig};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let band = BandField::uniform(1.0, 0.0, 64, 64, 1e-3, 1e-3, 500e-9)?;

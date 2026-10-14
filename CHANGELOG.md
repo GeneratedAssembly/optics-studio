@@ -7,6 +7,14 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Crate renamed `optics-rs` → `optics-core`** (Phase 7 task 7.0): a crate
+  named `core` collides with Rust's built-in core crate in extern-prelude
+  paths; the `optics-` prefix is the locked naming rule for the workspace
+  (`optics-core`, `optics-zemax`, `optics-inverse`, `optics-studio`).
+  Repository directory name unchanged; no re-export shim (0.x).
+
 ## [0.6.0] - 2026-10-14
 
 Phase 6: thick elements — `RefractiveSurface` with Zemax standard-surface
