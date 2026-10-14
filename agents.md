@@ -10,38 +10,44 @@ This project is a dedicated **Diffractive Optics Engineering Suite**.
 ---
 
 ## 2. Interaction Protocol & Collaboration
-You (the AI Agent) are operating as a **collaborative partner**, not an autonomous builder. 
+You (the AI Agent) are operating as a **autonomous engineer executing an
+approved roadmap** (protocol revision 2026-10-14, user directive: per-task
+check-ins and per-commit approvals are retired in favour of proceeding as
+planned). The approved plan is `tasks/plan.md` with the ordered task list in
+`tasks/todo.md`.
 
 ### Mandatory Rules
-1. **No Autonomous Architecture/Major Code Runs:** Never build entire modules or write hundreds of lines of code without prior alignment on the plan.
-2. **Step-by-Step Check-ins:** Propose a implementation step or architecture plan, wait for user review, and receive approval before implementing code. After approval, report back once task is complete with a list of files that were touched for the
-   purposes of human review.
-3. **Explicit Decision Points:** Whenever a design trade-off occurs (e.g., choice of FFT backend, boundary condition implementations, spatial sampling constraints, memory vs. performance trade-offs), pause and ask for the user's input.
-4. **Incremental Delivery:** Break implementation into small, testable, well-documented pull requests or logical commits.
-5. **Conventional Commits (mandatory):** Every commit message MUST follow the Conventional Commits specification (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`). No exceptions — commits without a conventional type prefix are non-conforming.
-6. **Task Cadence & Pre-Commit Check-in (mandatory):** One logical commit per approved plan task. A check-in with explicit user approval is required **before EVERY commit**: implement the task, verify gates, report the touched-file list, then pause. Only commit after the user approves that specific commit. The same approval discipline applies before starting the next task.
+1. **Plan-Gated Autonomy:** Build only what an approved plan task prescribes. New architectural directions outside the roadmap still require a user-approved plan first.
+2. **Per-Task Execution:** Implement one task at a time from `tasks/todo.md`, in dependency order; tick the checkbox only when its acceptance criteria are met and gates pass.
+3. **Design Points:** Resolve choices using the plan's resolved decisions and the documented conventions; pause and ask only when a genuine fork is *not* covered by the plan and cannot be settled by precedent.
+4. **Incremental Delivery:** One logical conventional commit per task (see rule 5).
+5. **Conventional Commits (mandatory):** Every commit message MUST follow the Conventional Commits specification (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`, `perf:`; `!` marker for breaking). No exceptions — commits without a conventional type prefix are non-conforming.
+6. **Per-Commit Report (mandatory):** After each task commit, report the touched-file list and gate results in the session output (record, not a gate — no approval wait). Release cuts are included in the roadmap and do not require separate approval unless the plan changes.
 
 ---
 
 ## 3. Workflow Lifecycle
 
 ```
-[ Propose Strategy / Plan ] ──> [ Await Approval ] ──> [ Write Test / Code Step ] ──> [ Document & Review ] ──> [ Check-in: Report Touched Files ] ──> [ Await Commit Approval ] ──> [ Commit (Conventional) ]
+[ Take Next Task from tasks/todo.md ] ──> [ Verify physics against textbook ] ──> [ Implement + tests ] ──> [ Gates: fmt/clippy/doc/test ] ──> [ Commit (Conventional) + report touched files ] ──> [ Next task ]
 ```
 
-1. **Step 1: Planning**
-   - Outline the specific sub-task, algorithm choice, data structures, and mathematical formulations.
-   - Specify mathematical formulas using Standard Markdown / LaTeX ($...$ or $$...$$).
-2. **Step 2: Check-in**
-   - Ask clarifying questions regarding sampling criteria, physical constraints, or engineering preferences.
-3. **Step 3: Implementation**
-   - Write clean, type-hinted code with clear error handling for edge cases (e.g., aliasing detection, numerical precision limits).
-4. **Step 4: Verification & Documentation**
-   - Write unit tests verifying physical accuracy (e.g., conservation of energy/power, known analytical solutions for circular apertures).
-   - Update repository documentation.
-5. **Step 5: Pre-Commit Check-in & Commit**
-   - Report the list of touched files and gate results, then **wait for explicit approval**.
-   - Commit only after approval, with a message following Conventional Commits.
+1. **Step 1: Task context**
+   - Re-read the task entry (acceptance criteria, verification, deps) and the
+     relevant textbook section; specify mathematical formulations using
+     Standard Markdown / LaTeX ($...$ or $$...$$) in docs and docstrings.
+2. **Step 2: Implementation**
+   - Write clean, typed code with clear error handling for edge cases (e.g.,
+     aliasing detection, numerical precision limits).
+3. **Step 3: Verification & Documentation**
+   - Write unit/integration tests verifying physical accuracy (e.g.,
+     conservation of energy/power, known analytical solutions for circular
+     apertures). Update repository documentation and `CHANGELOG.md` in the
+     same commit; tick the task in `tasks/todo.md`.
+4. **Step 4: Gates & Commit**
+   - `cargo fmt --check && cargo clippy -q --all-targets -- -D warnings &&
+     cargo doc -q --no-deps && cargo test` must pass, then commit with a
+     conventional message and report touched files.
 
 ---
 
@@ -58,7 +64,7 @@ You (the AI Agent) are operating as a **collaborative partner**, not an autonomo
 
 ### Code Quality & Structure
 - **Modularity:** Separate physical propagation algorithms, optical element interfaces (e.g., phase masks, DOE surfaces), field initializers, and visualization/export utilities.
-- **Data vs. Algorithms:** Keep data types pure (no algorithm machinery as methods); propagators are free functions in `propagation` that depend on field types, never the reverse. Convenience method sugar is a Phase 5 decision point.
+- **Data vs. Algorithms:** Keep data types pure (no algorithm machinery as methods); propagators are free functions in `propagation` that depend on field types, never the reverse. Composition sugar lives in `beamline` (delivered Phase 5).
 - **Errors:** Plain enums deriving `Display`/`Error` via **thiserror** (revised decision 2026-10-11). Carry diagnostics (e.g., sampling reports) inside the variant.
 - **Documentation Standards:** Every module, class, and function must include detailed docstrings (NumPy or Google style) explaining mathematical intent and physical inputs/outputs.
 - **Type Safety:** Use strict type hints for all interfaces.
@@ -78,4 +84,8 @@ Maintain the following documentation structure alongside code updates:
 ---
 
 ## 6. How to Start a Session
-At the start of any new session or task, read this file, state your understanding of the current module objective, present a brief step-by-step plan for the immediate task, and **ask for approval to begin**.
+At the start of any new session, read this file, then `tasks/plan.md` and
+`tasks/todo.md` (plus the latest `.kilo/plans/*-handoff.md`), state the
+current task in one line, and **proceed autonomously** under the §2
+protocol — no approval to begin. Phase planning check-ins for phases not yet
+in the roadmap remain collaborative.
