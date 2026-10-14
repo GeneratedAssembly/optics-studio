@@ -71,6 +71,7 @@ dependencies = [
 name = "optics-inverse"
 version = "0.1.0"
 dependencies = [
+ "num-complex",
  "optics-core",
  "rand",
  "thiserror",
