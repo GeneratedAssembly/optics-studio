@@ -1,18 +1,22 @@
 # ADR-9.11: Custom merit frontend (optics-inverse 0.2.0)
 
-Status: **proposed — decision pending user input.** Resolved decision 7
-(`tasks/plan.md`) delegates this fork to the user because they write merits
-in Python daily; task 9.11 (`tasks/todo.md`) and GitHub issue
-optics-studio#3 both mark the decision as needing user input. The options,
-cost analysis, and a recommendation are recorded below; the decision
-questions are §7. On the answer this record flips to **accepted** with the
-choice (and any user override) filled in, and task 9.12 implements it.
+Status: **accepted** (user decision, 2026-10-14, via the GEN-46 question
+card). Resolved decision 7 (`tasks/plan.md`) delegated this fork to the
+user because they write merits in Python daily; task 9.11
+(`tasks/todo.md`) and GitHub issue optics-studio#3 both marked the
+decision as needing user input. The user answered all three questions
+(§7) exactly as recommended: **Q1 = A (pyo3+numpy behind feature `py`),
+Q2 = A1 (Rust binary embeds the Python interpreter), Q3 = layered
+gradients (optional user-supplied `obs_gradient` callable, automatic
+FD-on-obs fallback, shipped gradient check helper)**. The DSL is deferred
+(not rejected) to the Phase-10 UI ADR; extension-module packaging is
+deferred to 0.2.x. Task 9.12 implements §8.
 
 Companion seam (already shipped in 0.1.0): `Merit` in
 `crates/optics-inverse/src/merit.rs` and the numpy-ready `Observation`
-layout in `crates/optics-inverse/src/observe.rs`. Whatever is chosen, the
-frontend implements exactly that trait — nothing else in the solver stack
-changes (decision 7's "plugs in without redesign" constraint).
+layout in `crates/optics-inverse/src/observe.rs`. The chosen frontend
+implements exactly that trait — nothing else in the solver stack changes
+(decision 7's "plugs in without redesign" constraint holds).
 
 ## Context
 
@@ -148,7 +152,7 @@ the Python side.
 The three are not exclusive; the real question is which is the *documented
 default path* and which is the automatic fallback.
 
-## 6. Recommendation (to be confirmed by the user)
+## 6. Decision (accepted as recommended)
 
 - **Frontend: A, embedding direction A1** — pyo3+numpy behind feature
   `py`, Rust binary hosts the interpreter, `PyMerit` implements the 0.1.0
@@ -168,16 +172,14 @@ default path* and which is the automatic fallback.
   fallback (G3, existing seam) + a shipped gradient check helper. No
   crate dependency on jax/torch.
 
-## 7. Decision questions (asked of the user)
+## 7. Decision questions — answered 2026-10-14
 
-1. **Frontend vehicle** — A: pyo3+numpy behind feature `py` (recommended)
-   / B: expression DSL / C: both?
-2. **If A — host direction** — A1: Rust embeds Python (recommended) /
-   A2: Python extension module (maturin) / both in 0.2.0?
-3. **Gradient strategy** — layered: optional user gradient + FD-on-obs
-   fallback + check helper (recommended) / require user-supplied
-   gradients for the adjoint path / FD-on-obs only (keep 0.1.0 fallback
-   semantics, no gradient callable)?
+1. **Frontend vehicle** — answered **A: pyo3+numpy behind feature `py`**
+   (recommended option).
+2. **Host direction** — answered **A1: Rust embeds Python** (recommended
+   option). A2 (extension module) deferred to 0.2.x packaging work.
+3. **Gradient strategy** — answered **layered** (recommended option):
+   optional user gradient callable + FD-on-obs fallback + check helper.
 
 ## 8. Consequences
 
@@ -199,7 +201,7 @@ Budget note (either way): pyo3/numpy add build time only under the
 feature; no core API change; the `Box<dyn Merit>` object story is
 untouched.
 
-## Rejected alternatives (if the recommendation stands)
+## Rejected alternatives
 
 - **DSL as primary:** expressiveness gap for exactly the merit class this
   milestone is for, plus parser/codegen scope; deferred to the Phase-10

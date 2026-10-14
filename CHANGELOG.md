@@ -9,6 +9,14 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- Phase-9 task 9.11 — custom merit frontend ADR **accepted**: pyo3+numpy
+  behind feature `py` (Rust binary embeds the Python interpreter), layered
+  gradients for user merits (optional user-supplied `obs_gradient`
+  callable, automatic FD-on-obs fallback, shipped gradient check helper);
+  expression DSL deferred to the Phase-10 UI ADR, extension-module
+  packaging deferred to 0.2.x (`docs/adr-9.11-custom-merit-frontend.md`).
+  User decision via the GEN-46 question card, 2026-10-14. Docs only —
+  implementation is task 9.12. (GitHub #3 / GEN-46.)
 - Phase-10 task 10.0 — UI framework ADR **accepted**: dioxus, pinned
   `=0.7.10`, web target (`wasm32-unknown-unknown`), CSR-only; leptos
   0.8.22 recorded as fallback (`docs/adr-10.0-ui-framework.md`). Ratifies

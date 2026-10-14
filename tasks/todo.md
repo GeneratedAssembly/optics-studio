@@ -193,11 +193,15 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
 
 ### Milestone B — custom merit frontend (optics-inverse 0.2.0)
 
-- [ ] **9.11 Frontend ADR** — pyo3+numpy embedding (feature `py`) vs
+- [x] **9.11 Frontend ADR** — pyo3+numpy embedding (feature `py`) vs
   expression DSL compiled to closures vs both; gradient strategy for user
   merits (user-supplied / autodiff-on-Python-side / FD-on-obs). Decision
   needs user input (they write merits in Python daily). Scope: M.
-  Deps: 9.10.
+  Deps: 9.10. → **accepted** (user, 2026-10-14, GEN-46 card): A =
+  pyo3+numpy behind feature `py`, Rust binary embeds the interpreter;
+  layered gradients (optional user `obs_gradient` callable + FD-on-obs
+  fallback + check helper); DSL deferred to the Phase-10 UI ADR,
+  extension-module packaging to 0.2.x. `docs/adr-9.11-custom-merit-frontend.md`.
 
 - [ ] **9.12 Custom-merit implementation + CRLB worked example** — user
   merits over `Observation`; first worked example = Fisher/CRLB A-optimal
