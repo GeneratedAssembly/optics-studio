@@ -84,6 +84,15 @@ Dependency direction (build bottom-up):
 5. **Crate names locked:** core `optics-core` (`core` reserved by the
    language — never as a crate name), `optics-zemax`, `optics-inverse`,
    **`optics-studio`** (UI).
+7. **Merit extensibility (Phase-9 check-in, user 2026-10-14):** simple
+   common FOMs are built-ins; CRLB-class merits are NOT baked in — they
+   "depend heavily on parameters we don't know a priori" and are expressed
+   by the user as **custom merit functions in Python or mathematical
+   notation**. That frontend is its own milestone (optics-inverse 0.2.0);
+   the 0.1.0 framework must keep the `Merit` seam (trait + numpy-ready
+   `Observation` layout) so it plugs in without redesign.
+8. **Adjoint in Phase 9 before 0.1.0** (grid-DOF merits are FD-infeasible);
+   DL `burn` milestone stays in Phase 9 (feature-gated, ships as 0.3.0).
 
 ## Phase 7 — Core forward-physics close-out (crate: optics-core → 0.7.0)
 

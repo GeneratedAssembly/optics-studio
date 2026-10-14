@@ -98,30 +98,123 @@ cargo doc -q --no-deps && cargo test`), approval before each commit.
 - [ ] A real .zmx imports and its PSF is computed through the core
 - [ ] Review with human before Phase 9
 
-## Phase 9 — Inverse design (optics-inverse) — EPIC, re-decompose at check-in
+## Phase 9 — Inverse design (optics-inverse) — decomposed at 9.0 check-in 2026-10-14
 
-Order locked (resolved decisions 2–3): FD + derivative-free + GS first,
-adjoint later, autodiff only if required; DL stack = `burn`.
+Order locked (resolved decisions 2–3, 7–8): FD + derivative-free + GS first,
+adjoint before 0.1.0; custom-merit Python/DSL frontend is its own milestone
+(0.2.0); DL `burn` milestone stays in Phase 9 behind a feature (0.3.0).
+Reference workflow the API must serve: hypercam `coded_mask.py` —
+parameterized DOE relief → differentiable ASM render (with ∂I/∂x, ∂I/∂y,
+∂I/∂λ channels) → estimation-theoretic merit (Fisher/CRLB trace) →
+first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
 
-- [ ] **9.0 Planning check-in** — detailed task decomposition (scope,
-  golden problems, burn feature-gating).
-- [ ] **9.1 Parameterized systems** — param vector → `Beamline` builder
-  closure trait; design problem = (params → system, FOM, penalties).
-- [ ] **9.2 Gerchberg–Saxton phase retrieval** (textbook Sec. 5.5) + DVR/FPR
-  variants for DOE masks; golden hologram problems.
-- [ ] **9.3 Derivative-free solvers** — random walk, simulated annealing,
-  evolution strategies; golden lens-shaping problems.
-- [ ] **9.4 Finite-difference gradients + first-order solvers** (Adam /
-  L-BFGS wrapper).
-- [ ] **9.5 Adjoint-gradient milestone** — ADR first; backprop through the
-  FFT chain; 2-run gradients.
-- [ ] **9.6 Deep-learning milestone** — headless dataset generation harness,
-  surrogate + inverse-network training on `burn` (GPU allowed here, not in
-  core).
-- [ ] **9.7 Release 0.1.0** + docs.
+- [x] **9.0 Planning check-in** — decomposition below; resolutions recorded
+  in plan.md decisions 7–8. Scope: S.
+
+### Milestone A — framework + solvers (optics-inverse 0.1.0)
+
+- [ ] **9.1 Crate scaffold** — `crates/optics-inverse` (package
+  `optics-inverse`), workspace member, path-dep `optics-core`, `rand`
+  (0.8, default-features minimal); `InverseError` (thiserror) in `error.rs`;
+  lib.rs module skeleton + crate docs. Acceptance: `cargo test --workspace`
+  green with empty crate. Scope: S. Deps: none.
+
+- [ ] **9.2 Parameter & design-space types** — `Param { name, lo, hi, init,
+  fd_step }`; `Params` bounded vector: validation (non-finite, out-of-range
+  → `InvalidParams` at apply, never panics — precedent: core InvalidMedium),
+  clamp vs reject policy documented, `random(&mut rng)` init, FD step
+  defaults (relative to span). Pure data, no solver machinery. Scope: S.
+  Deps: 9.1.
+
+- [ ] **9.3 Carriers** — `Carrier` design objects: `Analytic` (params →
+  closure builds owned `Beamline`/surfaces — the zemax `plan` two-phase
+  pattern reused as shape, not type) and `GridPhase` (params → sampled
+  phase grid → `PhaseMask::grid`; thickness form h(x,y) → phase
+  2π(n(λ)−1)h/λ via `Material`, the notebook's chromatic carrier).
+  Acceptance: round-trip grid → PhaseMask applies to BandField; analytic
+  closure rebuilds a beamline deterministically. Scope: M. Deps: 9.2.
+
+- [ ] **9.4 Observation + renderer** — `Observation`: flat f64 intensity
+  stack over (λ-bin, field-sample) + optional derivative channels
+  (∂x, ∂y via analytic derivative source fields; ∂λ via central differences)
+  + grid metadata; numpy-transferable layout (documented strides).
+  `render(carrier, bands, fields) -> Observation` via core ASM +
+  `field::sum_intensity` (incoherent). Golden: −δ/mask/+δ defocus chain
+  reproduces pure-piston collimation; Gaussian-PSF ∂x channel matches
+  analytic derivative < 1e-3 rel. Scope: M. Deps: 9.3.
+
+- [ ] **9.5 Merit trait + simple built-in FOMs** — `Merit {
+  evaluate(&Observation) -> f64; obs_gradient(&Observation) ->
+  Option<Vec<f64>> }` (None ⇒ FD-on-obs fallback; the seam decision 7's
+  frontend will implement). Built-ins: MSE-to-target, EE-in-radius,
+  Strehl-vs-reference, MTF@freq, spot RMS (wrap core `analysis`).
+  Acceptance: built-ins agree with core analysis on golden PSFs; trait
+  object usable as `Box<dyn Merit>`. Scope: M. Deps: 9.4.
+
+- [ ] **9.6 Derivative-free solvers** — `Solver` API
+  `solve(problem, budget) -> Solution { params, value, history, best }`;
+  random walk w/ adaptive step, simulated annealing, (μ,λ_w)-ES (hand-rolled
+  Gaussian via Box-Muller over `rand`). Golden: 1-param focus flattening
+  (tune gap, maximize EE-in-radius), 2-param doublet curvatures. Scope: M.
+  Deps: 9.5.
+
+- [ ] **9.7 FD gradients + Adam** — central differences over `Params`
+  (2·dim renders), Adam w/ norm-clip + best-epoch snapshot (notebook
+  discipline). Golden: adjust one curvature of the imported ACA254 doublet
+  to minimize spot RMS — proves zemax→inverse loop (dev-dep optics-zemax).
+  Scope: M. Deps: 9.6.
+
+- [ ] **9.8 Gerchberg–Saxton + adaptive GS** — textbook §5.5; DOE phase
+  mask between input/target planes, two ASM half-transforms, energy
+  projections, error signal + convergence diagnostics; DVR/FPR variants as
+  iterations. Golden: top-hat shaper (flat target within aperture, MSE
+  monotone), GS recovers a known phase-only lens. Scope: M. Deps: 9.4
+  (9.5 for stop test).
+
+- [ ] **9.9 Adjoint gradients (ADR first)** — key fact: the adjoint of ASM
+  propagation is propagation by −z (conjugate transfer function), of a
+  thin element is pointwise conjugate multiply, of an aperture is masked
+  multiply ⇒ adjoint = forward primitives in reverse order, NO autodiff
+  graph. ADR records the math: ḡ = (∂M/∂obs)ᵀ pushed back through the
+  render chain → dM/dgrid in 1 forward + |channels| adjoint runs.
+  Acceptance: adjoint grid gradient matches FD-on-coarse-grid < 1e-4 rel
+  (analytic carrier); GS error signal sign/shape matches adjoint of MSE.
+  Scope: L. Deps: 9.8.
+
+- [ ] **9.10 Release optics-inverse 0.1.0** — docs (physics.md GS + adjoint
+  sections, architecture.md crate), CHANGELOG, example
+  `examples/coded_doe.rs` (GS top-hat), version cut. Scope: S.
+  Deps: 9.1–9.9.
+
+### Milestone B — custom merit frontend (optics-inverse 0.2.0)
+
+- [ ] **9.11 Frontend ADR** — pyo3+numpy embedding (feature `py`) vs
+  expression DSL compiled to closures vs both; gradient strategy for user
+  merits (user-supplied / autodiff-on-Python-side / FD-on-obs). Decision
+  needs user input (they write merits in Python daily). Scope: M.
+  Deps: 9.10.
+
+- [ ] **9.12 Custom-merit implementation + CRLB worked example** — user
+  merits over `Observation`; first worked example = Fisher/CRLB A-optimal
+  trace (Poisson + gaussian weighting; event log-ratio variant) expressed
+  as a user merit, optimized on a small DOE window via 9.9 adjoint.
+  Validation: cross-check forward render against a trained thickness map
+  exported from hypercam `coded_mask.py` (byte-level Observation compare at
+  reduced scale). Scope: L. Deps: 9.11.
+
+- [ ] **9.13 Release 0.2.0** + docs + example. Scope: S. Deps: 9.12.
+
+### Milestone C — deep surrogates (optics-inverse 0.3.0, feature `dl`)
+
+- [ ] **9.14 burn harness** — headless dataset generation (params →
+  observations), surrogate forward + inverse network training; GPU allowed
+  here, never in core. Scope: L. Deps: 9.13.
+- [ ] **9.15 Release 0.3.0** + docs. Scope: S.
 
 ### Checkpoint: Inverse works (end of Phase 9)
 - [ ] GS + one stochastic + one gradient solver recover a known DOE design
+- [ ] Doublet-curvature golden recovers spot-size minimum (zemax→inverse)
+- [ ] One user-defined CRLB merit optimizes a DOE window
 - [ ] Review with human before Phase 10
 
 ## Phase 10 — UI (optics-studio) — EPIC, re-decompose at check-in
