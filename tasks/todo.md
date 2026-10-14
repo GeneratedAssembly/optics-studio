@@ -169,7 +169,7 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   to minimize spot RMS — proves zemax→inverse loop (dev-dep optics-zemax).
   Scope: M. Deps: 9.6.
 
-- [ ] **9.8 Gerchberg–Saxton + adaptive GS** — textbook §5.5; DOE phase
+- [x] **9.8 Gerchberg–Saxton + adaptive GS** — textbook §5.5; DOE phase
   mask between input/target planes, two ASM half-transforms, energy
   projections, error signal + convergence diagnostics; DVR/FPR variants as
   iterations. Golden: top-hat shaper (flat target within aperture, MSE

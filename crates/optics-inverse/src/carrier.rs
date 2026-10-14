@@ -278,6 +278,22 @@ impl Carrier {
         self.params().slots().first().map(|p| (p.lo, p.hi))
     }
 
+    /// Lattice geometry of a grid carrier (`None` for analytic carriers).
+    /// Exposed so grid-domain solvers (e.g. Gerchberg–Saxton, task 9.8)
+    /// can validate their field grid against the carrier and apply the
+    /// clear aperture without going through [`Carrier::build`].
+    pub fn grid_geom(&self) -> Option<GridGeom> {
+        match self {
+            Self::GridPhase { grid } | Self::GridThickness { grid, .. } => Some(GridGeom {
+                dims: grid.dims,
+                pitch: grid.pitch,
+                aperture: grid.aperture,
+                center: grid.center,
+            }),
+            Self::Analytic { .. } => None,
+        }
+    }
+
     /// Build the design from a parameter vector at band `lambda` (meters).
     ///
     /// Validation is apply-time: dimension, finiteness, and bounds surface

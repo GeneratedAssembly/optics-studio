@@ -9,6 +9,22 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- `optics-inverse`: `gs` — Gerchberg–Saxton phase retrieval / DOE design
+  (textbook §5.5): a phase-only `GridPhase` carrier between input and
+  target planes relayed by two ASM half-transforms, with energy
+  projections at both planes (target amplitude $T$; DOE-plane
+  illumination amplitude under the carrier aperture), exposed error
+  signals (target-plane amplitude residual $|U_t|-T$ and DOE-plane phase
+  residual $\Delta\varphi$) and per-iteration convergence diagnostics
+  (merit, best-so-far, Eq. 5.18 amplitude MSE, error RMS). Adaptive
+  iteration options `Dvr` (damped phase update, $\beta\in(0,2)$) and
+  `Fpr` (relaxed Fourier-plane replacement, $\beta\in(0,1]$); stopping
+  runs through the 9.5 `Merit` seam on each iteration's `Observation`.
+  Goldens: top-hat shaper (flat interior, monotone best-so-far MSE) and
+  recovery of a known phase-only lens from its target-plane intensity;
+  FFT shift/normalization and phase-sign conventions pinned by dedicated
+  tests. New `Carrier::grid_geom()` accessor for grid-domain solvers.
+  (Phase-9 task 9.8.)
 - Phase-10 UI/UX spec (`docs/ux/spec.md`) and framework ADR draft
   (`docs/ux/adr-10.0-draft.md`): personas, forward (`.zmx` → simulate →
   PSF/metrics) and inverse (carrier → merit → solver → review) workflows,
