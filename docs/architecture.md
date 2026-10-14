@@ -448,7 +448,7 @@ Out of scope (agents.md): ray tracing / geometric optics, vector field grids,
 GPU/parallelism, dispersive propagators, interactive visualization *inside
 this crate* (the front-end project owns the UI).
 
-## 7. Workspace crate: `optics-inverse` (Phase 9 Milestone A — released 0.1.0)
+## 7. Workspace crate: `optics-inverse` (Phase 9 — 0.1.0 released, 0.2.0 in development)
 
 Inverse design flips the forward model: a **design** is parameterized by
 a bounded vector, a **renderer** produces an `Observation`, a **merit**
@@ -468,7 +468,9 @@ never appears in the public surface.
 | `fd` | Central-difference parameter gradients (2·dim renders/step) + Adam descent (norm-clip, best-epoch snapshot) | `gradient`, `AdamConfig` |
 | `gs` | Gerchberg–Saxton phase retrieval / DOE design (physics §12): two ASM half-transforms, energy projections, DVR/FPR variants, `Merit`-seam stopping | `GsProblem`, `GsConfig`, `GsVariant`, `GsInit`, `run`, `GsSolution`, `GsRecord` |
 | `adjoint` | Reverse-mode grid gradients (physics §13, ADR-9.9): adjoints of the forward primitives in reverse order — no autodiff graph | `asm_adjoint`, `transmission`, `push_back`, `grid_gradient`, `PlaneGradient` |
-| `error` | Crate-wide typed errors via thiserror — validation surfaces at apply time, never a panic | `InverseError` |
+| `gradcheck` | FD-on-observation machinery: central differences on the data vector, the ADR-9.11 check helper (`assert_close`), and the `FdObsMerit` wrapper that makes an opaque merit adjoint-consumable at window scale | `fd_obs_gradient`, `check`, `assert_close`, `window_indices`, `GradCheckConfig`, `GradientCheck`, `FdObsMerit` |
+| `py` (feature) | Custom-merit Python frontend (ADR-9.11, physics §14): embedded interpreter via pyo3 `auto-initialize`; `PyMerit` implements `Merit`, presenting the observation as a read-only `(C,B,S,Ny,Nx)` float64 ndarray + metadata dict, with an optional user `merit_grad` callable; Python exceptions wrap as `InverseError::Python` | `PyMerit`, `channel_name` |
+| `error` | Crate-wide typed errors via thiserror — validation surfaces at apply time, never a panic | `InverseError` (`Python` and `GradCheck` variants added in 0.2.0) |
 
 **Data flow (solver loop):** `Params` vector → `Carrier::build(values, λ)`
 → `Design` → `Renderer` (core ASM) → `Observation` → `Merit::evaluate` →
@@ -479,7 +481,14 @@ bidirectional loop on the carrier lattice and returns a legal `GridPhase`
 parameter vector — the same lattice the solver paths optimize.
 
 **Milestone seams (0.2.0 / 0.3.0):** the `Merit` trait is the attachment
-point for the custom-merit frontend (Milestone B), and the flat
-numpy-ready `Observation` layout is the dataset interface for `burn`
-surrogates (Milestone C, feature-gated). Example:
-`crates/optics-inverse/examples/coded_doe.rs` (GS top-hat beam shaper).
+point for the custom-merit frontend — `PyMerit` (feature `py`,
+ADR-9.11) implements it against the numpy-ready `Observation` layout, so
+no solver code changed for Milestone B; the same flat layout is the
+dataset interface for `burn` surrogates (Milestone C, feature-gated).
+The frontend's GIL discipline: every merit call takes the GIL for its
+duration, so merit evaluations serialize — harmless while solvers are
+single-threaded, and a constraint any future parallel-render path must
+respect (ADR-9.11 §8). Examples:
+`crates/optics-inverse/examples/coded_doe.rs` (GS top-hat beam shaper),
+`crates/optics-inverse/examples/crlb_doe.rs` (CRLB user merit optimized
+via the adjoint, `--features py`).

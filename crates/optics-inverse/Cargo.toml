@@ -10,8 +10,23 @@ optics-core = { path = "../.." }
 thiserror = "2"
 rand = "0.8"
 num-complex = "0.4.6"
+pyo3 = { version = "0.29", features = ["auto-initialize"], optional = true }
+numpy = { version = "0.29", optional = true }
+
+[features]
+default = []
+# Custom-merit Python frontend (ADR-9.11): embeds CPython via pyo3.
+py = ["dep:pyo3", "dep:numpy"]
 
 [dev-dependencies]
 # Task 9.7 golden only: the zemax -> inverse loop test imports a real
 # prescription. NOT a public dependency of the crate API.
 optics-zemax = { path = "../optics-zemax" }
+
+[[example]]
+name = "crlb_doe"
+required-features = ["py"]
+
+[[test]]
+name = "py_merit"
+required-features = ["py"]

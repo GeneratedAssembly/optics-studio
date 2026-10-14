@@ -203,13 +203,20 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   fallback + check helper); DSL deferred to the Phase-10 UI ADR,
   extension-module packaging to 0.2.x. `docs/adr-9.11-custom-merit-frontend.md`.
 
-- [ ] **9.12 Custom-merit implementation + CRLB worked example** — user
+- [x] **9.12 Custom-merit implementation + CRLB worked example** — user
   merits over `Observation`; first worked example = Fisher/CRLB A-optimal
   trace (Poisson + gaussian weighting; event log-ratio variant) expressed
   as a user merit, optimized on a small DOE window via 9.9 adjoint.
   Validation: cross-check forward render against a trained thickness map
   exported from hypercam `coded_mask.py` (byte-level Observation compare at
-  reduced scale). Scope: L. Deps: 9.11.
+  reduced scale). Scope: L. Deps: 9.11. → **delivered**: feature `py`
+  (`PyMerit` embedded-CPython adapter over the `Merit` seam + read-only
+  ndarray bridge), `gradcheck` (FD-on-obs, `assert_close` check helper,
+  `FdObsMerit` adjoint fallback), `examples/crlb_doe.rs` +
+  `examples/crlb_merit.py` (analytic gradient validated vs FD, adjoint
+  Adam descent, event variant via fallback),
+  `tests/hypercam_forward.rs` + export script (trained-map render agrees
+  to ~3e-12 of peak). `docs/physics.md` §14. (GitHub #4 / GEN-47.)
 
 - [ ] **9.13 Release 0.2.0** + docs + example. Scope: S. Deps: 9.12.
 

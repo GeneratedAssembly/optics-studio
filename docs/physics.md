@@ -848,6 +848,63 @@ channels is rejected (their adjoint is a future extension). The
 transmission probe assumes a thin element whose action is a pure
 pointwise complex multiply — all current core elements (§9).
 
+## 14. Custom merits and the CRLB observation model (`optics-inverse`, task 9.12)
+
+Per plan decision 7, estimation-theoretic merits are **user merits**, not
+built-ins: their measurement-model parameters (photon budget, read noise,
+event thresholds) are project-specific. The 0.2.0 frontend (ADR-9.11,
+feature `py`) embeds CPython and scores a user function over the
+`Observation` buffer viewed as a read-only float64 array shaped
+$(C, B, S, N_y, N_x)$ — the §13 layout, so the adjoint path consumes the
+user's $\partial M/\partial\text{data}$ directly.
+
+The worked example (`examples/crlb_merit.py`, driven by
+`examples/crlb_doe.rs`) is the A-optimal Cramér–Rao trace for
+source-position estimation $\theta = (x_0, y_0)$. The Fisher information
+is built from the observation itself, with **no extra physics**:
+
+- **Scene-stencil derivatives.** With the renderer scenes placed at
+  $(0,0), (\pm h, 0), (0, \pm h)$, the source-position derivatives are
+  central differences of the intensity stacks,
+  $\partial I/\partial x_0 \approx (I_{+x} - I_{-x})/2h$ — the same
+  identity `observe.rs` uses for its FD derivative channels, evaluated
+  inside the merit so the adjoint seed stays confined to the intensity
+  channel (§13 scope).
+- **Noise model.** Per pixel $p$, expected photo-electrons
+  $E_p = \Phi\, I_p / \sum I + b$ (peak-normalized flux $\Phi$, background
+  $b$); variance $V_p = E_p + \sigma_r^2$ adds gaussian read noise to the
+  Poisson term. The Fisher matrix is the inverse-variance Gram sum
+
+  $$\mathcal{F} = \sum_p \frac{1}{V_p}\, \nabla I_p\, \nabla I_p^{\mathsf{T}},
+  \qquad M = \operatorname{tr}\!\big[(\mathcal{F} + r\,I)^{-1}\big]\,(s_i s_j),$$
+
+  minimized ($r$ = ridge, $s$ = parameter scales; the trace is reported
+  in $\mu m^2$). This is `crlb_from_images` in the hypercam
+  `coded_mask.py` notebook, reduced to spatial parameters.
+- **Event log-ratio variant.** For an event camera the measurement is
+  $O = \log I_t - \log I_{t-\tau}$ (CodedEvents, Shah et al.); the
+  delta-method variance is $\approx 2/E_p$, so the Jacobian becomes
+  $\nabla \log I = \nabla I / I$ with weights $E_p/2$. The example runs
+  this variant through the FD-on-obs fallback (`gradcheck::FdObsMerit`)
+  — the ADR's layered-gradient story: user gradient → exact adjoint seed,
+  no gradient → window-scale FD (validated against autograd in the
+  example's development, cos ≈ 1.0).
+
+**Gradient discipline.** User gradients are a correctness trap: the
+frontend ships `gradcheck::assert_close`, comparing
+`Merit::obs_gradient` against central differences on a pixel window
+(the example validates the analytic CRLB gradient this way before
+optimizing; FD steps on tail pixels must not drive intensities negative —
+the event merit floors its log-ratio denominators for exactly that).
+
+**Cross-check.** `tests/hypercam_forward.rs` renders a *trained* thickness
+map exported from the notebook model
+(`scripts/hypercam_forward_export.py`) through the Rust
+`Renderer`/`PhaseMask`/`ThinLens` chain and compares the raw
+`Observation` buffers element-for-element at reduced scale: agreement is
+$\sim 3\cdot10^{-12}$ of peak — two independent implementations (torch
+FFT vs rustfft) of the same ASM spec.
+
 ## References
 
 1. *Diffractive Optics: Design, Fabrication, and Test* (workspace root PDF):

@@ -57,4 +57,20 @@ pub enum InverseError {
         /// Human-readable cause.
         reason: String,
     },
+    /// A user-defined Python merit (feature `py`, ADR-9.11) raised an
+    /// exception or returned a value the frontend could not use. `reason`
+    /// carries the Python exception text.
+    #[error("python merit failed: {reason}")]
+    Python {
+        /// Python-side diagnostic (exception type and message).
+        reason: String,
+    },
+    /// The gradient check helper (ADR-9.11 §6) compared a merit's analytic
+    /// `obs_gradient` against central differences on the observation and
+    /// they disagreed beyond the configured tolerance.
+    #[error("obs-gradient check failed: {reason}")]
+    GradCheck {
+        /// Summary of the worst mismatch (index, values, tolerance).
+        reason: String,
+    },
 }

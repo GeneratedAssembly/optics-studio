@@ -9,6 +9,30 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- Phase-9 task 9.12 — **custom-merit implementation + CRLB worked
+  example** (implements ADR-9.11 §8): feature `py` (`optics-inverse`
+  only; default features unchanged, CI stays Python-free) adds `PyMerit`,
+  an embedded-CPython (pyo3 0.29 `auto-initialize`) adapter over the 0.1.0
+  `Merit` seam — the observation is presented to user code as a read-only
+  float64 ndarray shaped `(C, B, S, Ny, Nx)` plus a metadata dict, with
+  Python exceptions wrapped as `InverseError::Python` and an optional
+  `merit_grad` callable feeding the 9.9 adjoint. New `gradcheck` module
+  (no feature): FD-on-observation central differences, the ADR's shipped
+  check helper (`assert_close` on a pixel window), and `FdObsMerit`, the
+  wrapper that makes opaque merits adjoint-consumable at window scale.
+  Worked example `examples/crlb_doe.rs` + `examples/crlb_merit.py`: the
+  A-optimal CRLB trace for source-position estimation (Poisson +
+  gaussian read-noise weighting; scene-stencil derivatives keep the
+  adjoint seed on the intensity channel) optimized on a 24×24 DOE
+  window via `grid_gradient`; the analytic user gradient is validated
+  against FD before descent, and the event-camera log-ratio variant
+  (CodedEvents delta-method weights) runs through the FD fallback.
+  Validation: `tests/hypercam_forward.rs` cross-checks the Rust render
+  chain against a trained thickness map exported from hypercam
+  `coded_mask.py` (verbatim ASM/relay/CRLB model, reduced scale;
+  element-for-element `Observation` compare, agreement ~3e-12 of peak;
+  export script included). Docs: `docs/physics.md` §14,
+  `docs/architecture.md` §7. (GitHub #4 / GEN-47.)
 - Phase-10 task 10.3 — **inverse run controls + convergence plot**
   (`crates/studio`, extends the crate 10.2 created). Host-testable run core
   (`run/`): `RunJob` — a **serializable** description of one inverse run
