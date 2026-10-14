@@ -407,11 +407,22 @@ one propagation-level type is a later API decision.
   coefficients (scalar screens only). Next: a `zemax` import layer
   (prescription parse → surfaces + medium steps) — no model changes
   needed, format mapping only.
-- **Design TBD (unscheduled)**: Zemax-style interactive front-end (a
-  separate project consuming this crate's headless API), inverse solving
-  (weighted least-squares DOE design, Gerchberg–Saxton phase retrieval per
-  textbook Sec. 5.5), PSF visual-analysis suite. Design choices below are
-  made now to keep these open.
+- **Phase 7** (core forward-physics close-out) — **complete, released as
+  0.7.0**: `Material::sellmeier` dispersion mechanism; incoherent multiband
+  summation (`field::sum_intensity`, D3 closed — `Psf` now the shared
+  intensity-grid data type in `field`); `analysis` metrics (encircled
+  energy, spot RMS, MTF, Strehl, Maréchal); Zernike least-squares
+  decomposition; paraxial surface tilt (breaking constructor change;
+  `ThickLens` tilt-free by cancellation). **The core crate is now
+  feature-complete for forward modelling** — remaining exclusions are
+  by design (mirrors/waveplates need axis-fold/vector fields; oblique
+  Fresnel coefficients; ray tracing per agents.md scope).
+- **Roadmap (post-core, tracked in `tasks/plan.md` + `tasks/todo.md`)**:
+  workspace of sibling crates — `optics-zemax` (prescription import:
+  parse → `RefractiveSurface` + medium steps), `optics-inverse`
+  (GS/derivative-free/finite-difference first, adjoint later, `burn`
+  deep surrogates last), `optics-studio` (web UI, opt-in workspace
+  member). Design choices below keep these open.
 
 **Forward-compatibility design choices (decided at Phase-3 planning):**
 

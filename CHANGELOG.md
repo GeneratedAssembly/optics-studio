@@ -7,6 +7,16 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-14
+
+Phase 7: core forward-physics close-out — `Material::sellmeier`,
+incoherent multiband summation (`sum_intensity`, `Psf` promoted to
+`field`), PSF analysis metrics (EE/spot RMS/MTF/Strehl/Maréchal), Zernike
+wavefront decomposition, and paraxial surface tilt. **The core crate is
+feature-complete for forward modelling**; the workspace roadmap
+(`optics-zemax`, `optics-inverse`, `optics-studio`) is tracked in
+`tasks/plan.md`.
+
 ### Added
 
 - `Material::sellmeier(terms)` (Phase 7 task 7.1): standard Sellmeier Book-1

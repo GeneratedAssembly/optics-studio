@@ -1,7 +1,7 @@
 # Physics — Wave-Optics Propagation in `optics-core`
 
 This document details the mathematical models, transfer functions, and
-validity regimes implemented in Phases 1–6 (ASM exact, in vacuum or
+validity regimes implemented in Phases 1–7 (ASM exact, in vacuum or
 refractive media; Fresnel transfer-function and convolution forms;
 Fraunhofer far field; Rayleigh–Sommerfeld first kind; regime guidance;
 thin elements — apertures, dispersive thin lens, phase-mask DOE interface
