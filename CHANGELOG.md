@@ -32,6 +32,10 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   composing renderer+merit for solvers. Built-in values match core
   `analysis` on golden PSFs; analytic gradients FD-verified. (Phase-9
   task 9.5.)
+- `optics-inverse`: derivative-free solvers — adaptive-step random search
+  and simulated annealing (auto-calibrated T0, geometric cooling), sharing
+  a `Solver`/`Solution`/`StochasticConfig` API over the objective closure
+  with bound-clamping prevention. (Phase-9 task 9.6.)
 - `Material::sellmeier_book1(constant, terms)` (core): generalized Book-1
   form $n^2 = C_0 + \sum B\lambda^2/(\lambda^2 - C)$ — required by the
   H.H. Li (1980) CaF2 parameterization; `sellmeier` is the $C_0 = 1$ case.

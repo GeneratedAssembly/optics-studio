@@ -151,12 +151,13 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   Acceptance: built-ins agree with core analysis on golden PSFs; trait
   object usable as `Box<dyn Merit>`. Scope: M. Deps: 9.4.
 
-- [ ] **9.6 Derivative-free solvers** — `Solver` API
+- [x] **9.6 Derivative-free solvers** — `Solver` API
   `solve(problem, budget) -> Solution { params, value, history, best }`;
-  random walk w/ adaptive step, simulated annealing, (μ,λ_w)-ES (hand-rolled
-  Gaussian via Box-Muller over `rand`). Golden: 1-param focus flattening
-  (tune gap, maximize EE-in-radius), 2-param doublet curvatures. Scope: M.
-  Deps: 9.5.
+  random search w/ adaptive step, simulated annealing (auto-calibrated T0,
+  geometric cooling). ES evaluated and dropped (premature bound-convergence
+  without CMA; adaptive-step random walk covers the role — see solve.rs
+  module docs). Golden: 1-param focus flattening (tune gap, maximize
+  EE-in-radius), 2-param doublet curvatures. Scope: M. Deps: 9.5.
 
 - [ ] **9.7 FD gradients + Adam** — central differences over `Params`
   (2·dim renders), Adam w/ norm-clip + best-epoch snapshot (notebook

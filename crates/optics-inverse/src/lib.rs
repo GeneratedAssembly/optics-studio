@@ -38,8 +38,9 @@ pub mod error;
 pub mod merit;
 pub mod observe;
 pub mod params;
+pub mod solve;
 
-pub use carrier::{Carrier, Design, Step};
+pub use carrier::{AnalyticBuilder, Carrier, Design, GridGeom, GridSpec, Step};
 pub use error::InverseError;
 pub use merit::{
     EncircledEnergyMerit, Merit, MseToTarget, MtfMerit, Selector, SpotRmsMerit, StrehlMerit,
@@ -47,6 +48,7 @@ pub use merit::{
 };
 pub use observe::{Channel, Derivatives, Observation, Renderer};
 pub use params::{Param, Params};
+pub use solve::{Solution, Solver, StochasticConfig};
 
 /// Crate result alias.
 pub type Result<T> = std::result::Result<T, InverseError>;

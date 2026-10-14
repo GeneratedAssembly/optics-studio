@@ -8,7 +8,7 @@
 //!
 //! Validation policy (agents.md §4 — prefer prevention): values are checked
 //! at *apply* time (`Params::validate`) and surface as [`InverseError`],
-//! never a panic. Solvers that must stay inside bounds use [`Params::clamp`]
+//! never a panic. Solvers that must stay inside bounds use [`Params::clamp_all`]
 //! (prevention) rather than relying on rejection.
 
 use rand::Rng;

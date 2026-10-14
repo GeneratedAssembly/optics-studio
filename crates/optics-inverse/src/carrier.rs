@@ -108,9 +108,10 @@ impl Design {
 }
 
 /// Sampled-grid carrier geometry shared by [`Carrier::grid_phase`] and
-/// [`Carrier::grid_thickness`].
+/// [`Carrier::grid_thickness`]. Fields are private; construct via the
+/// [`Carrier`] grid builders.
 #[derive(Clone)]
-struct GridSpec {
+pub struct GridSpec {
     params: Params,
     dims: (usize, usize),
     pitch: (f64, f64),
@@ -118,18 +119,22 @@ struct GridSpec {
     center: (f64, f64),
 }
 
+/// Geometry + slot bounds for a grid carrier constructor.
+#[derive(Clone, Copy, Debug)]
+pub struct GridGeom {
+    /// Lattice sample counts `(nx, ny)`.
+    pub dims: (usize, usize),
+    /// Lattice pitch (m).
+    pub pitch: (f64, f64),
+    /// Clear aperture (stop).
+    pub aperture: ClearAperture,
+    /// Grid center in field coordinates (m).
+    pub center: (f64, f64),
+}
+
 impl GridSpec {
-    fn new(
-        dims: (usize, usize),
-        pitch: (f64, f64),
-        aperture: ClearAperture,
-        center: (f64, f64),
-        lo: f64,
-        hi: f64,
-        init: f64,
-        prefix: &str,
-    ) -> Result<Self> {
-        let (nx, ny) = dims;
+    fn new(geom: GridGeom, lo: f64, hi: f64, init: f64, prefix: &str) -> Result<Self> {
+        let (nx, ny) = geom.dims;
         if nx == 0 || ny == 0 {
             return Err(InverseError::Carrier {
                 reason: format!("grid dims must be positive, got ({nx}, {ny})"),
@@ -137,10 +142,10 @@ impl GridSpec {
         }
         Ok(Self {
             params: Params::uniform(nx * ny, lo, hi, init, prefix),
-            dims,
-            pitch,
-            aperture,
-            center,
+            dims: geom.dims,
+            pitch: geom.pitch,
+            aperture: geom.aperture,
+            center: geom.center,
         })
     }
 
@@ -153,7 +158,7 @@ impl GridSpec {
             self.dims,
             self.pitch,
             None,
-            self.aperture.clone(),
+            self.aperture,
             self.center,
         )
         .map_err(|e| InverseError::Carrier {
@@ -165,12 +170,15 @@ impl GridSpec {
     }
 }
 
+/// Analytic builder closure: `(values, lambda_m) -> Result<Design>`.
+pub type AnalyticBuilder = dyn Fn(&[f64], f64) -> Result<Design>;
+
 /// What the parameter vector tunes. See the [module docs](crate::carrier).
 pub enum Carrier {
     /// Analytic element parameters: closure `(values, lambda_m) -> Design`.
     Analytic {
         params: Params,
-        build: Box<dyn Fn(&[f64], f64) -> Result<Design>>,
+        build: Box<AnalyticBuilder>,
     },
     /// Sampled phase grid (radians per slot).
     GridPhase { grid: GridSpec },
@@ -203,7 +211,18 @@ impl Carrier {
         init: f64,
     ) -> Result<Self> {
         Ok(Self::GridPhase {
-            grid: GridSpec::new(dims, pitch, aperture, center, lo, hi, init, "phi")?,
+            grid: GridSpec::new(
+                GridGeom {
+                    dims,
+                    pitch,
+                    aperture,
+                    center,
+                },
+                lo,
+                hi,
+                init,
+                "phi",
+            )?,
         })
     }
 
@@ -225,7 +244,18 @@ impl Carrier {
             });
         }
         Ok(Self::GridThickness {
-            grid: GridSpec::new(dims, pitch, aperture, center, 0.0, t_max, init, "h")?,
+            grid: GridSpec::new(
+                GridGeom {
+                    dims,
+                    pitch,
+                    aperture,
+                    center,
+                },
+                0.0,
+                t_max,
+                init,
+                "h",
+            )?,
             material,
         })
     }

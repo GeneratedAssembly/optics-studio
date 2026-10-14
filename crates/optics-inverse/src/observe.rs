@@ -613,9 +613,9 @@ mod tests {
         let obs = r.render(&carrier.params().values()).unwrap();
         let sum = obs.band_sum(Channel::Intensity).unwrap();
         let ci = obs.channel_index(Channel::Intensity).unwrap();
-        for k in 0..obs.frame_len() {
+        for (k, &s) in sum.iter().enumerate() {
             let want = obs.slice(ci, 0, 0)[k] + obs.slice(ci, 1, 0)[k];
-            assert!((sum[k] - want).abs() < 1e-12);
+            assert!((s - want).abs() < 1e-12);
         }
     }
 

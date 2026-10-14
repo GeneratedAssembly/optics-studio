@@ -366,7 +366,7 @@ impl Merit for MtfMerit {
 
     fn evaluate(&self, obs: &Observation) -> Result<f64> {
         let frame = self.selector.frame(obs)?;
-        let (nx, ny) = obs.dims;
+        let nx = obs.dims.0;
         let dx = obs.pitch.0;
         if self.freq < 0.0 || 2.0 * self.freq * dx >= 1.0 {
             return Err(InverseError::Render {
@@ -484,13 +484,11 @@ mod tests {
         // knots; this merit uses the pixel-exact mask).
         let ee = optics_core::analysis::encircled_energy(&psf);
         let (radii, frac) = ee.curve();
-        let want = -frac
+        let last = radii
             .iter()
-            .zip(radii)
-            .filter(|(_, r)| **r <= 20e-6 + 1e-12)
-            .last()
-            .map(|(f, _)| *f)
-            .unwrap();
+            .rposition(|r| *r <= 20e-6 + 1e-12)
+            .expect("curve has a knot at r=0");
+        let want = -frac[last];
         let got = EncircledEnergyMerit {
             radius: 20e-6,
             selector: Selector::intensity(None, None),
