@@ -7,7 +7,8 @@ regime guidance, thin element library incl. refractive surfaces, thick
 lenses, and wedges, `sources` initializers incl. HG/LG modes and the
 point source, and `beamline` PSF composition).
 The physics rationale lives in [`physics.md`](physics.md); development
-protocol in [`../agents.md`](../agents.md).
+protocol in [`../agents.md`](../agents.md). Section 7 documents the
+`optics-inverse` workspace crate (Phase 9 Milestone A, released 0.1.0).
 
 ## 1. Dependency direction
 
@@ -419,9 +420,11 @@ one propagation-level type is a later API decision.
   Fresnel coefficients; ray tracing per agents.md scope).
 - **Roadmap (post-core, tracked in `tasks/plan.md` + `tasks/todo.md`)**:
   workspace of sibling crates — `optics-zemax` (prescription import:
-  parse → `RefractiveSurface` + medium steps), `optics-inverse`
-  (GS/derivative-free/finite-difference first, adjoint later, `burn`
-  deep surrogates last), `optics-studio` (web UI, opt-in workspace
+  parse → `RefractiveSurface` + medium steps; delivered Phase 8),
+  `optics-inverse` (GS/derivative-free/finite-difference first, adjoint
+  later, `burn` deep surrogates last — **Milestone A complete, released
+  as 0.1.0**, see §7; Milestone B custom-merit frontend and Milestone C
+  surrogates follow), `optics-studio` (web UI, opt-in workspace
   member). Design choices below keep these open.
 
 **Forward-compatibility design choices (decided at Phase-3 planning):**
@@ -444,3 +447,39 @@ one propagation-level type is a later API decision.
 Out of scope (agents.md): ray tracing / geometric optics, vector field grids,
 GPU/parallelism, dispersive propagators, interactive visualization *inside
 this crate* (the front-end project owns the UI).
+
+## 7. Workspace crate: `optics-inverse` (Phase 9 Milestone A — released 0.1.0)
+
+Inverse design flips the forward model: a **design** is parameterized by
+a bounded vector, a **renderer** produces an `Observation`, a **merit**
+scores it, and a **solver** searches the parameter space. Dependency
+direction stays one-way: `optics-inverse` depends on `optics-core` (path
+dependency) and consumes the public API exactly as a front-end would;
+`optics-zemax` is a dev-dependency only (the ACA254 Adam golden) and
+never appears in the public surface.
+
+| Module | Role | Public surface |
+|---|---|---|
+| `params` | The bounded design-space vector all solvers see (validate-at-apply, clamp, seeded `randomize`) | `Param`, `Params` |
+| `carrier` | What a parameter vector *means*: closure → owned element stack (`Design`) borrowing into a core `Beamline` on demand | `Carrier` (`analytic` / `grid_phase` / `grid_thickness`), `Design`, `Step`, `GridSpec`, `GridGeom`, `AnalyticBuilder` |
+| `observe` | Design → data: incoherent multi-band, multi-scene render through the core ASM, with FD derivative channels ∂I/∂x₀, ∂I/∂y₀, ∂I/∂λ | `Renderer`, `Observation` (flat `[channel][band][scene][row][col]`, numpy-ready), `Channel`, `Derivatives` |
+| `merit` | Scoring seam with optional observation gradient (`obs_gradient`; `None` ⇒ FD-on-observation fallback) | `Merit`, `MseToTarget`, `EncircledEnergyMerit`, `SpotRmsMerit`, `StrehlMerit`, `MtfMerit`, `Selector`, `objective` |
+| `solve` | Derivative-free solvers: adaptive-step random search, simulated annealing (auto-calibrated T0, geometric cooling) | `Solver`, `Solution`, `StochasticConfig` |
+| `fd` | Central-difference parameter gradients (2·dim renders/step) + Adam descent (norm-clip, best-epoch snapshot) | `gradient`, `AdamConfig` |
+| `gs` | Gerchberg–Saxton phase retrieval / DOE design (physics §12): two ASM half-transforms, energy projections, DVR/FPR variants, `Merit`-seam stopping | `GsProblem`, `GsConfig`, `GsVariant`, `GsInit`, `run`, `GsSolution`, `GsRecord` |
+| `adjoint` | Reverse-mode grid gradients (physics §13, ADR-9.9): adjoints of the forward primitives in reverse order — no autodiff graph | `asm_adjoint`, `transmission`, `push_back`, `grid_gradient`, `PlaneGradient` |
+| `error` | Crate-wide typed errors via thiserror — validation surfaces at apply time, never a panic | `InverseError` |
+
+**Data flow (solver loop):** `Params` vector → `Carrier::build(values, λ)`
+→ `Design` → `Renderer` (core ASM) → `Observation` → `Merit::evaluate` →
+solver update. Gradient paths substitute `fd::gradient` (parameter-space
+central differences) or `adjoint::grid_gradient` (one forward render +
+one adjoint run per gradient-carrying frame). GS runs its own
+bidirectional loop on the carrier lattice and returns a legal `GridPhase`
+parameter vector — the same lattice the solver paths optimize.
+
+**Milestone seams (0.2.0 / 0.3.0):** the `Merit` trait is the attachment
+point for the custom-merit frontend (Milestone B), and the flat
+numpy-ready `Observation` layout is the dataset interface for `burn`
+surrogates (Milestone C, feature-gated). Example:
+`crates/optics-inverse/examples/coded_doe.rs` (GS top-hat beam shaper).

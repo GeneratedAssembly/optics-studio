@@ -1,4 +1,4 @@
-# Physics — Wave-Optics Propagation in `optics-core`
+# Physics — Wave-Optics Propagation and Inverse Design
 
 This document details the mathematical models, transfer functions, and
 validity regimes implemented in Phases 1–7 (ASM exact, in vacuum or
@@ -8,7 +8,10 @@ thin elements — apertures, dispersive thin lens, phase-mask DOE interface
 (analytic and sampled), blazed grating — refractive surfaces and thick
 lenses with Zemax standard-surface profiles, wedge prisms; and sources:
 Gaussian/Hermite-Gauss/Laguerre-Gauss beams and the point-source
-spherical wave, composed into PSF pipelines by `beamline`).
+spherical wave, composed into PSF pipelines by `beamline`) and, from
+Phase 9, the inverse-design physics of the `optics-inverse` crate —
+Gerchberg–Saxton DOE design (§12) and adjoint gradients through the
+render chain (§13).
 The ultimate source of truth is
 *Diffractive Optics: Design, Fabrication, and Test* (SPIE TT95, the textbook
 PDF at the repository root); references below use its numbering.
@@ -724,6 +727,126 @@ geometric-sphere cross-check, surface power / plano-convex $f = R/(n-1)$
 spherical-aberration residual, conic-domain and media validation, slab
 piston $e^{ink t}$ and band-limit/guard scaling with $n$, wedge ramp
 gradient and deflection sign.
+Inverse-design physics additionally pinned by unit tests in
+`crates/optics-inverse/src/gs.rs` and `src/adjoint.rs`: GS convention
+pins (ASM round-trip identity, half-transform composition, converging-
+lens sign, blaze steering), the top-hat shaper golden (flat interior,
+monotone best-so-far Eq. 5.18 MSE), recovery of a known phase-only lens
+from its target-plane intensity, DVR/FPR convergence, the adjoint
+inner-product identity, adjoint-vs-FD grid-gradient agreement (global
+relative error $< 10^{-4}$), and the GS-error-signal / adjoint-gradient
+correlation ($> 0.9$).
+
+## 12. Gerchberg–Saxton phase retrieval / DOE design (`optics-inverse`, textbook §5.5)
+
+The *inverse* problem: given coherent illumination $U_{\text{in}}$ at an
+input plane and a target-plane amplitude $T(x, y)$, find a phase-only DOE
+that delivers $T$. The DOE (a `GridPhase` carrier, §9.3 sampled variant)
+sits at the midpoint of an input→target separation $z_{\text{total}} > 0$,
+so the coherent relay is **two ASM half-transforms** (§3) with the element
+between them:
+
+$$U_t = \mathcal{A}(z/2)\big\{A\,\Pi\,e^{i\varphi}\big\}, \qquad
+  A\,e^{i\psi} = \mathcal{A}(z/2)\{U_{\text{in}}\},$$
+
+where $\Pi$ is the carrier's clear-aperture indicator and $A\,e^{i\psi}$
+the illumination arriving at the DOE plane — computed once, since its
+amplitude $A$ (masked by $\Pi$) is the DOE-plane energy constraint. Each
+iteration (Eqs. 5.14–5.17):
+
+1. **Forward half-transform** of the current iterate
+   $A\,\Pi\,e^{i\varphi_k}$ to the target plane.
+2. **Fourier-plane (target) projection** — Eq. 5.16: replace the
+   amplitude, keep the phase, $U_t' = T\,U_t/|U_t|$; the `Fpr` variant
+   relaxes the replacement,
+   $|U_t| \to (1-\beta)\,|U_t| + \beta\,T$, $\beta \in (0, 1]$.
+3. **Back-propagation** $\mathcal{A}(-z/2)$ to the DOE plane, giving $V$
+   — the exact ASM adjoint on the passband (§13).
+4. **DOE-plane projection** — re-impose the illumination amplitude and
+   update only the phase,
+   $\varphi_{k+1} = \varphi_k + \beta\,\Delta\varphi$ with
+   $\Delta\varphi = \operatorname{wrap}_{[-\pi,\pi)}(\arg V - \varphi_k)$;
+   the `Dvr` variant damps/over-relaxes with $\beta \in (0, 2)$.
+
+`Classic` is the textbook algorithm ($\beta = 1$ in both projections).
+The design merit is the Eq. 5.18 amplitude MSE
+$M = \frac{1}{N}\sum(|U_t| - T)^2$; the exposed error signals are the
+target-plane amplitude residual $|U_t| - T$ and the DOE-plane phase
+residual $\Delta\varphi$ — the negative-gradient direction of $M$
+preconditioned by the illumination intensity (§13). Convergence and
+stopping run through the crate `Merit` seam: each iteration's
+target-plane intensity is wrapped as a single-band/single-scene
+`Observation` and scored, so any merit can terminate the loop.
+
+**Reachability:** a phase-only DOE conserves power, so $T$ must be
+scaled to the illumination ($T^2$ summed over the target support equals
+$\sum|U_{\text{in}}|^2$); a target demanding more energy than the
+illumination carries is unreachable by construction — the top-hat golden
+scales its flat top this way.
+
+**Conventions:** single band, fully coherent (multiband shaping is out of
+scope); transmission $e^{+i\varphi}$ with the converging-lens sign
+$\varphi(r) = -k r^2/(2f)$ focusing at $+z = f$; FFT scaling/sign/bin
+order inherited from §4.1; the phase vector is encoded into the
+carrier's slot bounds every iteration, so the iterate is always a legal
+`GridPhase` parameter vector.
+
+## 13. Adjoint gradients through the render chain (`optics-inverse`)
+
+The forward model of an `optics-inverse` render is a chain of exactly two
+primitive kinds, both **linear operators on the complex field**: ASM
+propagation (§3) and thin elements (pointwise complex multiply, §9).
+Because every primitive is linear, its adjoint (conjugate transpose) is
+another primitive of the *same kind* — the design gradient is obtained by
+pushing the merit's observation gradient **backward through the forward
+primitives in reverse order**, with no symbolic or graph-based autodiff.
+Full derivation, conventions, and rejected alternatives:
+[`adr-9.9-adjoint-gradients.md`](adr-9.9-adjoint-gradients.md).
+
+- **ASM propagation:**
+  $\mathcal{A}(z)^\dagger = \mathcal{A}(-z)$ with the *same* config —
+  the transfer phase conjugates, the evanescent and band-limit masks are
+  real and even in $z$, and the zero-pad / center-crop are each other's
+  adjoints under the §4.1 FFT convention (test
+  `asm_adjoint_inner_product_identity`).
+- **Thin element:** $T = \operatorname{diag}(t)$, so $T^\dagger$ is the
+  pointwise **conjugate** multiply $\bar{t} \odot (\cdot)$. An aperture
+  is the case $t = \Pi e^{i\varphi}$ with $\Pi \in \{0, 1\}$ — blocked
+  pixels pass no adjoint energy, so the aperture is self-adjoint in the
+  energy sense. The transmission is recovered without the element
+  exposing it: `apply` is pointwise, so $t = \texttt{apply}(\mathbf{1})$
+  on a unit field of the plane's geometry.
+- **Intensity seed:** the observation is $I_k = |U_k|^2$, so for a real
+  merit $M$ the detector-plane adjoint source is
+  $w_k = (\partial M/\partial I_k)\,U_k$ and
+  $dM = 2\,\Re\langle w, dU\rangle$.
+
+With $\mu$ the adjoint field pushed back to the plane **after** element
+$j$ and $V = t \odot U$ the tape field after it, perturbing one lattice
+phase injects $dV_p = i\,V_p\,d\varphi_p$, hence
+
+$$\frac{\partial M}{\partial \varphi_p} = -2\,\Im\!\big(\bar{\mu}_p\,V_p\big).$$
+
+**Cost:** $dM/d\text{grid}$ takes one forward render plus one adjoint run
+per gradient-carrying (band, scene) frame — independent of the grid
+length (contrast: FD-on-parameters costs $2\cdot\text{dim}$ renders per
+step, §12's GS needs no gradient at all).
+
+**GS relation (acceptance link):** the GS phase error signal of §12 is
+the negative adjoint gradient of the Eq. 5.18 amplitude MSE,
+preconditioned by the illumination intensity,
+$\nabla_\varphi M = -\frac{2}{N}\,A^2 \odot \Delta\varphi$ to first order
+(test `gs_phase_error_is_adjoint_mse_negative_gradient`) — §12 and §13
+are the same physics seen from the iteration side and the gradient side.
+
+**Scope and fallbacks:** merits must supply an observation gradient
+(`Merit::obs_gradient`); those that do not keep the FD-on-observation
+fallback. Only the intensity channel is adjoint-supported — a seed with
+nonzero entries in the $\partial I/\partial x_0$,
+$\partial I/\partial y_0$, $\partial I/\partial\lambda$ derivative
+channels is rejected (their adjoint is a future extension). The
+transmission probe assumes a thin element whose action is a pure
+pointwise complex multiply — all current core elements (§9).
 
 ## References
 
@@ -743,6 +866,8 @@ gradient and deflection sign.
    $r_p^2 = 2fp\lambda$), Sec. 4.2.2 + Eqs. 4.17–4.21 (phase from sag
    profile, OPD $=(n-1)r^2/2R$), Sec. 4.4.1 (diffractive surfaces for
    color correction), Eq. 5.1 (grating equation in design context),
+   Sec. 5.5 + Eqs. 5.14–5.18 (Gerchberg–Saxton iterative DOE design:
+   energy projections at both planes, amplitude-error merit),
    Sec. 11.2 (Gaussian beams as beam-shaper input).
 2. N. Matsushima and T. Shimobaba, "Band-limited angular spectrum method for
    numerical simulation of free-space propagation in close and far fields,"

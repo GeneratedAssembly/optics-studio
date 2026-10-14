@@ -9,51 +9,6 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
-- `optics-inverse`: `adjoint` — reverse-mode (adjoint) grid gradients, ADR
-  first (`docs/adr-9.9-adjoint-gradients.md` records the math): the ASM
-  adjoint is propagation by −z with the same config (exact under the pinned
-  FFT convention — `asm_adjoint_inner_product_identity`), the thin-element
-  adjoint is conjugate transmission recovered by probing `apply` on a unit
-  field, and the aperture is a self-adjoint 0/1 mask — so `dM/dgrid` costs
-  one forward render + one adjoint run per observation frame with no
-  autodiff graph (`asm_adjoint`, `transmission`, `push_back`,
-  `grid_gradient`). Acceptance: adjoint grid gradient matches FD on a
-  coarse grid (global relative error < 1e-4, test
-  `grid_gradient_matches_fd_on_coarse_grid`), and the GS phase error
-  signal is the negative adjoint gradient of the Eq. 5.18 amplitude MSE,
-  preconditioned by the illumination intensity (∇φM = −(2/N)A²⊙Δφ to
-  first order — correlation > 0.9 pinned by
-  `gs_phase_error_is_adjoint_mse_negative_gradient`).
-  Merits without `obs_gradient` and non-intensity seed channels surface as
-  the new `InverseError::Adjoint` (FD-on-observation remains the fallback).
-  New `Design::elements()`/`Design::steps()` accessors. (Phase-9 task 9.9.)
-- `optics-inverse`: `fd` — central-difference gradients over `Params`
-  (2·dim renders per step; steps are each slot's `fd_step`, defaulting to
-  1e-4 of the bound span) and `Solver::Adam`: Adam descent with
-  gradient-norm clipping and best-epoch snapshot, bound-clamped probes
-  (one-sided slope at bounds), deterministic by default; for this variant
-  `StochasticConfig::budget` counts epochs (`2·dim + 1` evaluations each)
-  and `Solution::history` records one merit value per epoch like the 9.6
-  solvers. Golden: bend one curvature of the imported ACA254-100-UV
-  doublet to minimize spot RMS — the zemax→inverse loop, with
-  `optics-zemax` as a dev-dependency only (public API unchanged).
-  (Phase-9 task 9.7.)
-- `optics-inverse`: `gs` — Gerchberg–Saxton phase retrieval / DOE design
-  (textbook §5.5): a phase-only `GridPhase` carrier between input and
-  target planes relayed by two ASM half-transforms, with energy
-  projections at both planes (target amplitude $T$; DOE-plane
-  illumination amplitude under the carrier aperture), exposed error
-  signals (target-plane amplitude residual $|U_t|-T$ and DOE-plane phase
-  residual $\Delta\varphi$) and per-iteration convergence diagnostics
-  (merit, best-so-far, Eq. 5.18 amplitude MSE, error RMS). Adaptive
-  iteration options `Dvr` (damped phase update, $\beta\in(0,2)$) and
-  `Fpr` (relaxed Fourier-plane replacement, $\beta\in(0,1]$); stopping
-  runs through the 9.5 `Merit` seam on each iteration's `Observation`.
-  Goldens: top-hat shaper (flat interior, monotone best-so-far MSE) and
-  recovery of a known phase-only lens from its target-plane intensity;
-  FFT shift/normalization and phase-sign conventions pinned by dedicated
-  tests. New `Carrier::grid_geom()` accessor for grid-domain solvers.
-  (Phase-9 task 9.8.)
 - Phase-10 UI/UX spec (`docs/ux/spec.md`) and framework ADR draft
   (`docs/ux/adr-10.0-draft.md`): personas, forward (`.zmx` → simulate →
   PSF/metrics) and inverse (carrier → merit → solver → review) workflows,
@@ -63,33 +18,6 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   invented APIs). ADR compares dioxus vs leptos against the workspace
   constraints and recommends dioxus with open questions for the Phase-10
   check-in. Docs only — no UI code. (S1-D pre-work, task GEN-42.)
-- `optics-inverse` (new crate): `Param`/`Params` — the bounded design-space
-  vector all solvers see: closed `[lo, hi]` bounds, per-slot FD step
-  (default 1e-4·span), validate-at-apply (never panics), clamp policy,
-  seeded `randomize`. (Phase-9 task 9.2.)
-- `optics-inverse`: `Design`/`Step` (owned element stack borrowing into a
-  core `Beamline`, zemax two-phase-plan pattern) and `Carrier` —
-  `analytic` (closure `(values, λ) → Design`), `grid_phase` (sampled
-  radians), and `grid_thickness` (relief meters, chromatic
-  $\varphi = 2\pi(n(\lambda)-1)h/\lambda$ rebuilt per band). (Phase-9
-  task 9.3.)
-- `optics-inverse`: `Observation` (numpy-ready flat `[channel][band][scene]
-  [row][col]` stacks) + `Renderer` — incoherent multi-band, multi-scene
-  render through the core ASM, with finite-difference derivative channels
-  ∂I/∂x₀, ∂I/∂y₀, ∂I/∂λ (the Fisher/CRLB input). Goldens: defocus/mask/
-  defocus piston identity, A(+z)∘A(−z) round-trip, ∂I/∂x₀ = −∂I/∂x
-  translation invariance, chromatic-focus λ-channel. (Phase-9 task 9.4.)
-- `optics-inverse`: `Merit` trait (`evaluate` + `obs_gradient` adjoint
-  seam) with built-ins `MseToTarget`, `EncircledEnergyMerit`,
-  `SpotRmsMerit`, `StrehlMerit`, `MtfMerit` over a `Selector`
-  (channel × band × scene, aggregation supported), plus `objective()`
-  composing renderer+merit for solvers. Built-in values match core
-  `analysis` on golden PSFs; analytic gradients FD-verified. (Phase-9
-  task 9.5.)
-- `optics-inverse`: derivative-free solvers — adaptive-step random search
-  and simulated annealing (auto-calibrated T0, geometric cooling), sharing
-  a `Solver`/`Solution`/`StochasticConfig` API over the objective closure
-  with bound-clamping prevention. (Phase-9 task 9.6.)
 - `Material::sellmeier_book1(constant, terms)` (core): generalized Book-1
   form $n^2 = C_0 + \sum B\lambda^2/(\lambda^2 - C)$ — required by the
   H.H. Li (1980) CaF2 parameterization; `sellmeier` is the $C_0 = 1$ case.
@@ -102,9 +30,6 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 - Repository is now a cargo workspace: root package `optics-core` +
   `crates/optics-zemax` (path dependency). No `git mv`, history intact.
-- New workspace member `crates/optics-inverse` (`optics-inverse` 0.1.0,
-  scaffold): `InverseError` + crate docs; Phase-9 tasks per
-  `tasks/todo.md` follow.
 
 ### Fixed
 
@@ -145,6 +70,113 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   not text, not binary-ZMX blocks, no zlib streams). Supported corpus =
   text `.zmx`; export from OpticStudio (File > Save As > Text) for
   batch designs.
+
+## [optics-inverse 0.1.0] - 2026-10-14
+
+Phase 9 Milestone A close-out — **first release of the `optics-inverse`
+crate**: the inverse-design framework (bounded `Params`, carriers,
+renderer + `Observation`, `Merit` seam, solvers), Gerchberg–Saxton DOE
+design, finite-difference Adam, and adjoint grid gradients (no autodiff
+graph). Physics documented in `docs/physics.md` §12–13, crate architecture
+in `docs/architecture.md` §7, adjoint derivation in
+`docs/adr-9.9-adjoint-gradients.md`. Milestone B (custom-merit frontend,
+0.2.0) and Milestone C (`burn` surrogates, 0.3.0) follow per
+`tasks/todo.md`.
+
+### Added
+
+- New workspace member `crates/optics-inverse` (`optics-inverse` 0.1.0):
+  `InverseError` + crate docs scaffold (Phase-9 task 9.1), then the
+  framework below built on top of the untouched core API.
+- `Param`/`Params` — the bounded design-space vector all solvers see:
+  closed `[lo, hi]` bounds, per-slot FD step (default 1e-4·span),
+  validate-at-apply (never panics), clamp policy, seeded `randomize`.
+  (Phase-9 task 9.2.)
+- `Design`/`Step` (owned element stack borrowing into a core `Beamline`,
+  zemax two-phase-plan pattern) and `Carrier` — `analytic` (closure
+  `(values, λ) → Design`), `grid_phase` (sampled radians), and
+  `grid_thickness` (relief meters, chromatic
+  $\varphi = 2\pi(n(\lambda)-1)h/\lambda$ rebuilt per band). (Phase-9
+  task 9.3.)
+- `Observation` (numpy-ready flat `[channel][band][scene]
+  [row][col]` stacks) + `Renderer` — incoherent multi-band, multi-scene
+  render through the core ASM, with finite-difference derivative channels
+  ∂I/∂x₀, ∂I/∂y₀, ∂I/∂λ (the Fisher/CRLB input). Goldens: defocus/mask/
+  defocus piston identity, A(+z)∘A(−z) round-trip, ∂I/∂x₀ = −∂I/∂x
+  translation invariance, chromatic-focus λ-channel. (Phase-9 task 9.4.)
+- `Merit` trait (`evaluate` + `obs_gradient` adjoint seam) with built-ins
+  `MseToTarget`, `EncircledEnergyMerit`, `SpotRmsMerit`, `StrehlMerit`,
+  `MtfMerit` over a `Selector` (channel × band × scene, aggregation
+  supported), plus `objective()` composing renderer+merit for solvers.
+  Built-in values match core `analysis` on golden PSFs; analytic
+  gradients FD-verified. (Phase-9 task 9.5.)
+- Derivative-free solvers — adaptive-step random search and simulated
+  annealing (auto-calibrated T0, geometric cooling), sharing a
+  `Solver`/`Solution`/`StochasticConfig` API over the objective closure
+  with bound-clamping prevention. (Phase-9 task 9.6.)
+- `fd` — central-difference gradients over `Params` (2·dim renders per
+  step; steps are each slot's `fd_step`, defaulting to 1e-4 of the bound
+  span) and `Solver::Adam`: Adam descent with gradient-norm clipping and
+  best-epoch snapshot, bound-clamped probes (one-sided slope at bounds),
+  deterministic by default; for this variant `StochasticConfig::budget`
+  counts epochs (`2·dim + 1` evaluations each) and `Solution::history`
+  records one merit value per epoch like the 9.6 solvers. Golden: bend
+  one curvature of the imported ACA254-100-UV doublet to minimize spot
+  RMS — the zemax→inverse loop, with `optics-zemax` as a dev-dependency
+  only (public API unchanged). (Phase-9 task 9.7.)
+- `gs` — Gerchberg–Saxton phase retrieval / DOE design (textbook §5.5,
+  `docs/physics.md` §12): a phase-only `GridPhase` carrier between input
+  and target planes relayed by two ASM half-transforms, with energy
+  projections at both planes (target amplitude $T$; DOE-plane
+  illumination amplitude under the carrier aperture), exposed error
+  signals (target-plane amplitude residual $|U_t|-T$ and DOE-plane phase
+  residual $\Delta\varphi$) and per-iteration convergence diagnostics
+  (merit, best-so-far, Eq. 5.18 amplitude MSE, error RMS). Adaptive
+  iteration options `Dvr` (damped phase update, $\beta\in(0,2)$) and
+  `Fpr` (relaxed Fourier-plane replacement, $\beta\in(0,1]$); stopping
+  runs through the 9.5 `Merit` seam on each iteration's `Observation`.
+  Goldens: top-hat shaper (flat interior, monotone best-so-far MSE) and
+  recovery of a known phase-only lens from its target-plane intensity;
+  FFT shift/normalization and phase-sign conventions pinned by dedicated
+  tests. New `Carrier::grid_geom()` accessor for grid-domain solvers.
+  (Phase-9 task 9.8.)
+- `adjoint` — reverse-mode (adjoint) grid gradients, ADR first
+  (`docs/adr-9.9-adjoint-gradients.md` records the math,
+  `docs/physics.md` §13): the ASM adjoint is propagation by −z with the
+  same config (exact under the pinned FFT convention —
+  `asm_adjoint_inner_product_identity`), the thin-element adjoint is
+  conjugate transmission recovered by probing `apply` on a unit field,
+  and the aperture is a self-adjoint 0/1 mask — so `dM/dgrid` costs one
+  forward render + one adjoint run per observation frame with no
+  autodiff graph (`asm_adjoint`, `transmission`, `push_back`,
+  `grid_gradient`). Acceptance: adjoint grid gradient matches FD on a
+  coarse grid (global relative error < 1e-4, test
+  `grid_gradient_matches_fd_on_coarse_grid`), and the GS phase error
+  signal is the negative adjoint gradient of the Eq. 5.18 amplitude MSE,
+  preconditioned by the illumination intensity (∇φM = −(2/N)A²⊙Δφ to
+  first order — correlation > 0.9 pinned by
+  `gs_phase_error_is_adjoint_mse_negative_gradient`).
+  Merits without `obs_gradient` and non-intensity seed channels surface
+  as the new `InverseError::Adjoint` (FD-on-observation remains the
+  fallback). New `Design::elements()`/`Design::steps()` accessors.
+  (Phase-9 task 9.9.)
+- Example `crates/optics-inverse/examples/coded_doe.rs`: GS top-hat
+  beam shaper — Gaussian illumination, power-scaled flat-top target,
+  convergence trace, interior flatness report, and PGM dumps of the DOE
+  phase and delivered target frame; rebuilds the design through
+  `Carrier::build` to prove the returned phase is a legal parameter
+  vector. (Phase-9 task 9.10.)
+
+### Docs
+
+- `docs/physics.md` §12 (Gerchberg–Saxton: relay geometry, Eqs.
+  5.14–5.18 projections, DVR/FPR relaxations, power-reachability,
+  conventions) and §13 (adjoint gradients: the three adjoint facts,
+  phase-grid formula $\partial M/\partial\varphi_p = -2\,\Im(\bar\mu_p
+  V_p)$, cost, GS error-signal relation, scope/fallbacks).
+- `docs/architecture.md` §7: the `optics-inverse` crate — module map,
+  one-way dependency on the core public API (`optics-zemax` dev-only),
+  solver-loop data flow, and the 0.2.0/0.3.0 milestone seams.
 
 ## [0.7.0] - 2026-10-14
 

@@ -186,7 +186,7 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   (analytic carrier); GS error signal sign/shape matches adjoint of MSE.
   Scope: L. Deps: 9.8.
 
-- [ ] **9.10 Release optics-inverse 0.1.0** — docs (physics.md GS + adjoint
+- [x] **9.10 Release optics-inverse 0.1.0** — docs (physics.md GS + adjoint
   sections, architecture.md crate), CHANGELOG, example
   `examples/coded_doe.rs` (GS top-hat), version cut. Scope: S.
   Deps: 9.1–9.9.
