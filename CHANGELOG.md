@@ -44,9 +44,12 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   UV beam through the imported doublet and verifies the imported image
   plane is the focal plane (on-axis intensity > 8x at ±20 mm defocus,
   > 30% power within 60 um of the spot centroid).
-- Binary `.zar` archives (e.g. the supplied TL4X-SAP black box) are NOT
-  a zip/text format and remain out of scope; export the `.zmx` from
-  Zemax for import.
+- Binary Zemax containers are out of import scope (verified 2026-10-14):
+  the supplied `.zar` archive and the Edmund Optics 2019 `.ZMF`
+  multi-config file (7432 part-number records, high-entropy payloads —
+  not text, not binary-ZMX blocks, no zlib streams). Supported corpus =
+  text `.zmx`; export from OpticStudio (File > Save As > Text) for
+  batch designs.
 
 ## [0.7.0] - 2026-10-14
 

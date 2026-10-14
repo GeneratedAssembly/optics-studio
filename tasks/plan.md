@@ -73,6 +73,14 @@ Dependency direction (build bottom-up):
 4. **UI: web from the start.** Framework choice (dioxus recommended for
    full-Rust + wasm; leptos alternative) is a Phase-10 ADR — user is
    agnostic.
+6. **Binary Zemax files are OUT of import scope** (2026-10-14, from the
+   Edmund Optics 2019 `.ZMF` inspection): 7432 part-number records,
+   high-entropy payloads, no text/binary-ZMX/zlib structure — same class
+   as the `.zar` archives. Supported corpus = text `.zmx` (the ACA254
+   golden validates the pipeline end-to-end). For batch designs: export
+   from OpticStudio with File > Save As > Text, or per-product `.zmx`
+   downloads. External `.AGF` text catalogs remain the pending upgrade
+   for exact catalog reproduction.
 5. **Crate names locked:** core `optics-core` (`core` reserved by the
    language — never as a crate name), `optics-zemax`, `optics-inverse`,
    **`optics-studio`** (UI).
