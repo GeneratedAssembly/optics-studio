@@ -19,6 +19,15 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   task 7.2, decision D3 close-out): incoherent multiband intensity sum —
   identical-grid validation (`FieldError::GeometryMismatch` newly added),
   intensities not amplitudes, no cross terms.
+- `analysis` module (Phase 7 task 7.3): detector-plane metrics over `Psf` —
+  `encircled_energy` (radius-sorted cumulative curve with
+  `value_at`/`radius_for_fraction` interpolation; Airy anchor
+  EE(r1) = 0.84 validated through the Fraunhofer engine),
+  `spot_rms_radius` (second moment; Gaussian anchor = w), `mtf` (|F{I}|/DC
+  along +fx in DFT order; Gaussian anchor exp(-pi^2 w^2 f^2) < 2%),
+  `strehl` (power-equalized peak ratio vs reference PSF), and
+  `marechal_strehl` (exp(-(2 pi sigma)^2), pairs with Zernike RMS).
+  `propagation::fft` module raised to `pub(crate)` for the MTF transform.
 - `Psf` promoted from `beamline` to `field.rs` as the crate's real-valued
   intensity-grid data type (pure data + bookkeeping): constructors
   `Psf::new` (validating) and `Psf::from_band`; `beamline` re-exports

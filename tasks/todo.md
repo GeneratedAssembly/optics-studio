@@ -35,7 +35,7 @@ cargo doc -q --no-deps && cargo test`), approval before each commit.
   power; two bands show no cross term; mismatched grids rejected. Verification:
   unit tests + gates. Deps: none. Files: `src/field.rs`, tests. Scope: S.
 
-- [ ] **Task 7.3: PSF analysis metrics**
+- [x] **Task 7.3: PSF analysis metrics**
   New `analysis` module on `Psf`/`Field`: encircled-energy curve EE(r),
   Strehl estimate (peak vs same-energy diffraction-limited reference or
   Maréchal from wavefront RMS when phase available), MTF via |FT(PSF)|

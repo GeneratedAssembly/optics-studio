@@ -45,7 +45,7 @@
 //! `apply` itself; see `docs/physics.md` §6.
 
 pub mod asm;
-mod fft;
+pub(crate) mod fft;
 pub mod fraunhofer;
 pub mod fresnel;
 pub mod rayleigh_sommerfeld;
