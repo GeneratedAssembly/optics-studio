@@ -12,6 +12,10 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 - `Material::sellmeier_book1(constant, terms)` (core): generalized Book-1
   form $n^2 = C_0 + \sum B\lambda^2/(\lambda^2 - C)$ — required by the
   H.H. Li (1980) CaF2 parameterization; `sellmeier` is the $C_0 = 1$ case.
+- Example `examples/inverse_drism.rs`: SAGE IV DRISM telescope — spec-to-
+  geometry inverse derivation (six-band meta-filter blaze + passbands vs
+  FPA format), wave-optics verification of band landing positions, and
+  off-band rejection; writes `target/drism_fpa.pgm`.
 
 ### Workspace
 
