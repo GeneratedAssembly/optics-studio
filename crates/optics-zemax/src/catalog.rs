@@ -7,6 +7,7 @@
 //! paraxial invariants typically agree to ~0.5% EFL / a few % BFL —
 //! external `.AGF` import is a pending follow-up (tasks/plan.md Phase 8).
 
+use crate::agf::AgfCatalog;
 use crate::error::ZemaxError;
 use optics_core::element::Material;
 
@@ -56,6 +57,68 @@ pub const BUILTIN: &[CatalogEntry] = &[
         ],
     },
 ];
+
+/// Active glass registry: built-in published entries plus optionally
+/// loaded AGF catalogs (AGF entries take precedence on name collisions).
+#[derive(Clone, Debug, Default)]
+pub struct Registry {
+    agf: Vec<crate::agf::AgfGlass>,
+}
+
+impl Registry {
+    /// Built-in entries only.
+    pub fn builtin() -> Self {
+        Self::default()
+    }
+
+    /// Append/override with an AGF catalog's glasses.
+    pub fn with_agf(mut self, catalog: &AgfCatalog) -> Self {
+        for g in &catalog.glasses {
+            self.agf.retain(|x| !x.name.eq_ignore_ascii_case(&g.name));
+            self.agf.push(g.clone());
+        }
+        self
+    }
+
+    /// Resolve a name to a dispersive [`Material`] (AGF first, then
+    /// built-in; AIR/empty = n 1).
+    pub fn material(&self, name: Option<&str>) -> Result<Material, ZemaxError> {
+        let up = name.unwrap_or("").trim().to_uppercase();
+        if up.is_empty() || up == "AIR" || up == "VACUUM" {
+            return Ok(Material::sellmeier_book1(1.0, []));
+        }
+        if let Some(g) = self.agf.iter().find(|g| g.name.to_uppercase() == up) {
+            let g = g.clone();
+            return Ok(Material::from_index_fn(move |lambda_m| {
+                g.index_at(lambda_m * 1e6).unwrap_or(f64::NAN)
+            }));
+        }
+        match lookup(&up)? {
+            None => Ok(Material::sellmeier_book1(1.0, [])),
+            Some(e) => Ok(Material::sellmeier_book1(e.constant, e.terms)),
+        }
+    }
+
+    /// Index at `lambda_um` for any source (registry-wide).
+    pub fn index_at(&self, name: Option<&str>, lambda_um: f64) -> Result<f64, ZemaxError> {
+        let up = name.unwrap_or("").trim().to_uppercase();
+        if up.is_empty() || up == "AIR" || up == "VACUUM" {
+            return Ok(1.0);
+        }
+        if let Some(g) = self.agf.iter().find(|g| g.name.to_uppercase() == up) {
+            return g.index_at(lambda_um);
+        }
+        match lookup(&up)? {
+            None => Ok(1.0),
+            Some(e) => Ok(index_at(e, lambda_um)),
+        }
+    }
+
+    /// Validate all names used by a prescription resolve here.
+    pub fn validate_glass(&self, name: Option<&str>) -> Result<(), ZemaxError> {
+        self.index_at(name, 0.5876).map(|_| ())
+    }
+}
 
 /// Refractive index at `lambda_um` (micrometers) for an entry.
 pub fn index_at(entry: &CatalogEntry, lambda_um: f64) -> f64 {

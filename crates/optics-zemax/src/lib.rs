@@ -31,11 +31,14 @@
 //! # }
 //! ```
 
+pub mod agf;
 pub mod builder;
 pub mod catalog;
 pub mod error;
 pub mod zmx;
 
+pub use agf::{AgfCatalog, AgfGlass};
 pub use builder::{ImportedSystem, ParaxialReport};
+pub use catalog::Registry;
 pub use error::ZemaxError;
 pub use zmx::{ZmxSurface, ZmxSystem};

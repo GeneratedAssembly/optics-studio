@@ -3,7 +3,7 @@
 //! medium-carrying `Beamline` gaps, all evaluated at the traced band's
 //! wavelength).
 
-use crate::catalog;
+use crate::catalog::Registry;
 use crate::error::ZemaxError;
 use crate::zmx::ZmxSystem;
 use optics_core::beamline::{Beamline, BeamlineError, Psf};
@@ -32,26 +32,40 @@ type Plan = (Vec<RefractiveSurface>, Vec<Step>);
 #[derive(Clone, Debug)]
 pub struct ImportedSystem {
     sys: ZmxSystem,
+    registry: Registry,
 }
 
 impl ImportedSystem {
     /// Parse + validate importability (surface types, mirrors, aspheric
     /// terms, glass resolvability) up front.
     pub fn parse(text: &str) -> Result<Self, ZemaxError> {
+        Self::parse_with(text, Registry::builtin())
+    }
+
+    /// Parse against an explicit glass registry (AGF catalogs loaded).
+    pub fn parse_with(text: &str, registry: Registry) -> Result<Self, ZemaxError> {
         let sys = ZmxSystem::parse(text)?;
-        let s = Self { sys };
+        let s = Self { sys, registry };
         s.validate()?;
         Ok(s)
     }
 
-    /// Read and parse a `.zmx` file.
+    /// Read and parse a `.zmx` file (built-in catalog).
     pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, ZemaxError> {
+        Self::load_with(path, Registry::builtin())
+    }
+
+    /// Read and parse a `.zmx` file against an explicit registry.
+    pub fn load_with(
+        path: impl AsRef<std::path::Path>,
+        registry: Registry,
+    ) -> Result<Self, ZemaxError> {
         let p = path.as_ref();
         let text = std::fs::read_to_string(p).map_err(|e| ZemaxError::Io {
             path: p.display().to_string(),
             source: e,
         })?;
-        Self::parse(&text)
+        Self::parse_with(&text, registry)
     }
 
     /// The parsed prescription.
@@ -79,16 +93,14 @@ impl ImportedSystem {
                     reason: "PARA aspheric terms pending golden data".into(),
                 });
             }
-            catalog::lookup(s.glass.as_deref().unwrap_or(""))?;
+            self.registry.validate_glass(s.glass.as_deref())?;
         }
         Ok(())
     }
 
     fn medium_index_after(&self, surface: usize, lambda_um: f64) -> Result<f64, ZemaxError> {
-        match catalog::lookup(self.sys.surfaces[surface].glass.as_deref().unwrap_or(""))? {
-            None => Ok(1.0),
-            Some(e) => Ok(catalog::index_at(e, lambda_um)),
-        }
+        self.registry
+            .index_at(self.sys.surfaces[surface].glass.as_deref(), lambda_um)
     }
 
     /// Paraxial matrix report at `lambda_um` (thin-screen composition
@@ -264,8 +276,8 @@ impl ImportedSystem {
                 };
                 surfaces.push(RefractiveSurface::new(
                     profile,
-                    catalog::material(front_glass)?,
-                    catalog::material(s.glass.as_deref())?,
+                    self.registry.material(front_glass)?,
+                    self.registry.material(s.glass.as_deref())?,
                     None,
                     None,
                     aperture,

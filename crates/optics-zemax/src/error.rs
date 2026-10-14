@@ -39,9 +39,26 @@ pub enum ZemaxError {
     /// primary index).
     #[error("prescription invalid: {0}")]
     BadHeader(String),
-    /// Glass not present in the built-in catalog.
-    #[error("glass {0:?} not in built-in catalog (external .AGF import pending)")]
+    /// Glass not present in the active catalog.
+    #[error("glass {0:?} not found in catalog")]
     UnknownGlass(String),
+    /// An AGF glass line could not be parsed.
+    #[error("AGF glass {name:?}: {reason}")]
+    BadGlass {
+        /// Glass name.
+        name: String,
+        /// What failed.
+        reason: String,
+    },
+    /// An AGF glass uses a dispersion model the evaluator does not
+    /// implement (4/5: power/polynomial).
+    #[error("AGF glass {name:?}: dispersion model {model} unsupported (1/2/3 only)")]
+    UnsupportedGlassModel {
+        /// Glass name.
+        name: String,
+        /// Model number from the NM line.
+        model: u8,
+    },
     /// An element construction rejected the imported geometry.
     #[error("element build failed: {0}")]
     Element(#[from] optics_core::element::OpticsError),

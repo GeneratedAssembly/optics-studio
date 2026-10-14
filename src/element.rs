@@ -339,6 +339,18 @@ impl Material {
         Self::sellmeier_book1(1.0, terms)
     }
 
+    /// Escape hatch: a material from a raw index closure
+    /// $\lambda$(m) $\mapsto n$ with zero absorption (the angle argument is
+    /// ignored). Used by external catalog adapters (e.g. Zemax AGF
+    /// Schott-model glasses); prefer [`Material::sellmeier`] /
+    /// [`Material::sellmeier_book1`] when the dispersion is Sellmeier.
+    pub fn from_index_fn(f: impl Fn(f64) -> f64 + 'static) -> Self {
+        Self {
+            n: Box::new(move |lambda, _angle| f(lambda)),
+            absorption: Box::new(|_lambda, _angle| 0.0),
+        }
+    }
+
     /// Generalized Sellmeier Book-1 with a constant offset:
     /// $n^2(\lambda) = C_0 + \sum_i B_i \lambda_\mu^2/(\lambda_\mu^2 - C_i)$
     /// (the form tabulated for e.g. CaF2, H.H. Li 1980). `sellmeier` is the
