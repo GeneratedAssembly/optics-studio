@@ -3,8 +3,9 @@
 Status: draft for the Phase 10 check-in (pre-work, task S1-D / GEN-42).
 Consumers: `tasks/todo.md` 10.0–10.3 and the `optics-studio` crate once it
 exists. This document specifies screens, flows, and API bindings only — it
-contains no code and no new physics. Framework choice is deferred to the
-ADR draft in [`adr-10.0-draft.md`](adr-10.0-draft.md).
+contains no code and no new physics. Framework choice is fixed by
+[`docs/adr-10.0-ui-framework.md`](../adr-10.0-ui-framework.md) (accepted:
+dioxus 0.7.10; draft comparison in [`adr-10.0-draft.md`](adr-10.0-draft.md)).
 
 Sources of truth: `tasks/plan.md` (Phase 10, resolved decision 4),
 `tasks/todo.md` (10.1–10.4), `docs/physics.md` (models + textbook citations),

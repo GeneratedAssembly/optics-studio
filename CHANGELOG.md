@@ -9,6 +9,16 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- Phase-10 task 10.0 — UI framework ADR **accepted**: dioxus, pinned
+  `=0.7.10`, web target (`wasm32-unknown-unknown`), CSR-only; leptos
+  0.8.22 recorded as fallback (`docs/adr-10.0-ui-framework.md`). Ratifies
+  the S1-D draft (`docs/ux/adr-10.0-draft.md`, now marked superseded)
+  after a pin-time check: standalone edition-2024 crate with
+  `dioxus = "=0.7.10", features = ["web"]` compiles clean for wasm32 on
+  rustc 1.98 (dioxus MSRV 1.83). Draft Q1–Q3 resolved (pin, `dx` tooling,
+  worker responsiveness model); Q4–Q7 deferred to tasks 10.2–10.4.
+  `tasks/plan.md` decision 4 and Phase-10 section record the decision.
+  Docs only — no UI code (10.1 adds `crates/studio`). (GitHub #8 / GEN-51.)
 - Phase-10 UI/UX spec (`docs/ux/spec.md`) and framework ADR draft
   (`docs/ux/adr-10.0-draft.md`): personas, forward (`.zmx` → simulate →
   PSF/metrics) and inverse (carrier → merit → solver → review) workflows,

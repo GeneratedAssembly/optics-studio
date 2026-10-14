@@ -1,6 +1,12 @@
 # ADR-10.0 (draft): UI framework for `optics-studio` — dioxus vs leptos
 
-Status: **draft** — pre-work for the Phase 10 check-in (task S1-D /
+Status: **superseded** — ratified as
+[`docs/adr-10.0-ui-framework.md`](../adr-10.0-ui-framework.md) (task 10.0 /
+GEN-51, 2026-10-14): dioxus accepted, pinned `=0.7.10`, leptos 0.8.22
+recorded as fallback; Q1–Q3 resolved there. This draft is kept unchanged as
+history of the comparison. Original status follows.
+
+Original: Status: **draft** — pre-work for the Phase 10 check-in (task S1-D /
 GEN-42). Resolved decision 4 (tasks/plan.md, 2026-10-14) fixed "web from
 the start" and left the framework choice to this ADR; the plan records
 dioxus as recommended, leptos as the alternative, user agnostic. This

@@ -234,8 +234,11 @@ Web from the start (resolved decision 4).
   constraints; recommendation + open questions for the check-in). Feeds
   10.0. No UI code.
 
-- [ ] **10.0 Framework ADR** — dioxus (recommended, full-Rust wasm) vs
-  leptos; record in plan.
+- [x] **10.0 Framework ADR** — dioxus (recommended, full-Rust wasm) vs
+  leptos; record in plan. → **dioxus accepted**, pinned `=0.7.10` web/CSR
+  (`docs/adr-10.0-ui-framework.md`); pin-time wasm32 + edition-2024 check
+  passed on rustc 1.98; leptos 0.8.22 recorded as fallback; draft Q1–Q3
+  resolved, Q4–Q7 deferred to 10.2–10.4. Plan decision 4 updated.
 - [ ] **10.1 Shell** — prescription view/editor (import via optics-zemax),
   parameter sliders → live Beamline preview.
 - [ ] **10.2 PSF/metrics viewport** — intensity render + EE/MTF/Strehl panel

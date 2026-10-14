@@ -73,7 +73,9 @@ Dependency direction (build bottom-up):
    headless forward model.
 4. **UI: web from the start.** Framework choice (dioxus recommended for
    full-Rust + wasm; leptos alternative) is a Phase-10 ADR — user is
-   agnostic.
+   agnostic. → **Resolved by ADR-10.0 (task 10.0, 2026-10-14): dioxus,
+   pinned `=0.7.10`, web target, CSR-only; leptos 0.8.22 recorded as the
+   fallback** (`docs/adr-10.0-ui-framework.md`).
 6. **Binary Zemax files are OUT of import scope** (2026-10-14, from the
    Edmund Optics 2019 `.ZMF` inspection): 7432 part-number records,
    high-entropy payloads, no text/binary-ZMX/zlib structure — same class
@@ -112,8 +114,9 @@ to deep surrogates. Depends on Phase 7 core; Phase 8 for realistic systems.
 
 ## Phase 10 — UI (crate: optics-studio → 0.1.0)
 
-Web front-end (framework ADR at phase start; dioxus recommended) over the
-headless APIs. Depends on 7–9.
+Web front-end (framework decided at phase start: **dioxus 0.7.10** —
+ADR-10.0 accepted, `docs/adr-10.0-ui-framework.md`; leptos 0.8.22 fallback)
+over the headless APIs. Depends on 7–9.
 
 See `tasks/todo.md` for the ordered, sized task list with acceptance criteria
 and checkpoints. Distant-phase tasks (9–10) are epic-level and will be
