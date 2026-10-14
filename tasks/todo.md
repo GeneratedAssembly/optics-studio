@@ -245,8 +245,18 @@ Web from the start (resolved decision 4).
   resolved, Q4–Q7 deferred to 10.2–10.4. Plan decision 4 updated.
 - [ ] **10.1 Shell** — prescription view/editor (import via optics-zemax),
   parameter sliders → live Beamline preview.
-- [ ] **10.2 PSF/metrics viewport** — intensity render + EE/MTF/Strehl panel
-  (analysis crate APIs only).
+- [x] **10.2 PSF/metrics viewport** — intensity render + EE/MTF/Strehl panel
+  (analysis crate APIs only). -> **delivered**: `crates/studio`
+  (`optics-studio` 0.1.0, dioxus `=0.7.10` web, wasm-gated deps; opt-in
+  member excluded from `default-members`) — pure view model (colormaps,
+  autoscale/lock/log mapping, box-average downsample <=2048, cross-cuts,
+  metric frames via `analysis::{encircled_energy, mtf, strehl,
+  marechal_strehl, spot_rms_radius, zernike_fit}`, SVG chart paths, spec 5.2
+  banner severities, G-8 engine dispatch adapter, G-6 synthetic reference-PSF
+  recipe, demo bundle) + dioxus viewport (band tabs, canvas ImageData paint,
+  cursor readout, EE/MTF/Strehl/Spot/Wavefront panels, shared scrubber).
+  ADR Q4 resolved: 2D ImageData. 55 native unit tests; wasm32 cargo
+  check/clippy clean. (GitHub #10 / GEN-53.)
 - [ ] **10.3 Inverse run controls** — start/stop solvers, convergence plot.
 - [ ] **10.4 Release 0.1.0** (`optics-studio`).
 

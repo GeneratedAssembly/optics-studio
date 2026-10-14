@@ -70,8 +70,16 @@ the leak guard.
   progress messages (no wasm threads; `SharedArrayBuffer` needs COOP/COEP
   headers a local file cannot assume). Worker crate choice
   (`gloo-worker` vs `comlink`) is an implementation decision for task 10.3.
-- **Q4 — Canvas backend:** deferred to task 10.2 (2D `ImageData` vs WebGL
-  at 2048²).
+- **Q4 — Canvas backend:** **resolved in task 10.2** — 2D `ImageData` via
+  `web-sys` `CanvasRenderingContext2d`, not WebGL. The spec's display budget
+  caps the painted grid at `MAX_DISPLAY_EDGE = 2048` samples per axis
+  (box-average downsample, `docs/ux/spec.md` §4), so the largest paint is a
+  2048² RGBA buffer pushed with `put_image_data`; WebGL buys nothing the 2D
+  path cannot, and browser GPU compute is explicitly out of scope
+  (`docs/ux/spec.md` §6). The backing store keeps grid resolution and the
+  CSS box upscales with `image-rendering: pixelated` so PSF detail survives
+  magnification. Decision recorded in
+  `crates/studio/src/app/canvas.rs`.
 - **Q5 — Packaging for 10.4:** deferred to task 10.4; web-only is the
   default, desktop artifact optional.
 - **Q6 — Seed policy on wasm:** unchanged — solver runs pass

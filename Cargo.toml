@@ -1,5 +1,8 @@
 [workspace]
-members = ["crates/optics-zemax", "crates/optics-inverse"]
+members = ["crates/optics-zemax", "crates/optics-inverse", "crates/studio"]
+# ADR-10.0 / docs/ux/spec.md §6: optics-studio is opt-in — gates and CI never
+# build it (its wasm check is an explicit, separately invoked target).
+default-members = [".", "crates/optics-zemax", "crates/optics-inverse"]
 
 [package]
 name = "optics-core"

@@ -9,6 +9,25 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- Phase-10 task 10.2 — **PSF/metrics viewport** in the new `optics-studio`
+  crate (`crates/studio`, v0.1.0). Dioxus `=0.7.10` web target, CSR-only,
+  with the framework dependency tree gated to `wasm32` so the crate's pure
+  view model unit-tests natively (`cargo test -p optics-studio`, 55 tests)
+  and the headless crates gain no UI deps. Opt-in workspace member excluded
+  from `default-members`, so repo gates never build it; the wasm check
+  (`cargo check -p optics-studio --target wasm32-unknown-unknown`) is the
+  leak guard. View model (`src/viewmodel`): colormaps (viridis/inferno/RdBu/
+  cyclic hue wheel), intensity autoscale/lock + log floor + box-average
+  downsample to <=2048, cross-sections through the peak or cursor, metric
+  frames bound to `optics_core::analysis` (`encircled_energy`, `mtf`,
+  `strehl`, `marechal_strehl`, `spot_rms_radius`, `zernike_fit`), SVG chart
+  paths, spec 5.2 sampling-banner severities, the G-8 engine-dispatch
+  adapter, the G-6 synthetic reference-PSF recipe, and a demo bundle. Dioxus
+  viewport (`src/app`, wasm): multi-band tabs, intensity canvas painted via
+  `web-sys` `ImageData`, cursor readout, EE/MTF/Strehl/Spot/Wavefront panels,
+  and the shared radius/frequency scrubber. ADR-10.0 Q4 resolved: 2D
+  `ImageData` canvas backend (not WebGL). No physics in the UI crate — every
+  metric number comes from `optics-core` APIs. (GitHub #10 / GEN-53.)
 - Phase-9 task 9.11 — custom merit frontend ADR **accepted**: pyo3+numpy
   behind feature `py` (Rust binary embeds the Python interpreter), layered
   gradients for user merits (optional user-supplied `obs_gradient`
