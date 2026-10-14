@@ -9,6 +9,15 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- Phase-10 UI/UX spec (`docs/ux/spec.md`) and framework ADR draft
+  (`docs/ux/adr-10.0-draft.md`): personas, forward (`.zmx` → simulate →
+  PSF/metrics) and inverse (carrier → merit → solver → review) workflows,
+  10.1–10.3 screen inventory with panel→headless-API bindings verified
+  against `cargo doc` of `optics-core`/`optics-zemax`/`optics-inverse`,
+  rendering + sampling-warning constraints, and a gap register (no
+  invented APIs). ADR compares dioxus vs leptos against the workspace
+  constraints and recommends dioxus with open questions for the Phase-10
+  check-in. Docs only — no UI code. (S1-D pre-work, task GEN-42.)
 - `optics-inverse` (new crate): `Param`/`Params` — the bounded design-space
   vector all solvers see: closed `[lo, hi]` bounds, per-slot FD step
   (default 1e-4·span), validate-at-apply (never panics), clamp policy,

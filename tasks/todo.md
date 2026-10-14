@@ -226,6 +226,14 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
 
 Web from the start (resolved decision 4).
 
+- [x] **S1-D UI/UX spec + ADR draft (pre-work)** — `docs/ux/spec.md`
+  (personas, forward/backward workflows, 10.1–10.3 screen inventory with
+  panel→headless-API bindings verified against `cargo doc`, rendering +
+  sampling-warning constraints, gap register) and
+  `docs/ux/adr-10.0-draft.md` (dioxus vs leptos against workspace
+  constraints; recommendation + open questions for the check-in). Feeds
+  10.0. No UI code.
+
 - [ ] **10.0 Framework ADR** — dioxus (recommended, full-Rust wasm) vs
   leptos; record in plan.
 - [ ] **10.1 Shell** — prescription view/editor (import via optics-zemax),
