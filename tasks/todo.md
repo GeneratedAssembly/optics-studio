@@ -218,7 +218,13 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   `tests/hypercam_forward.rs` + export script (trained-map render agrees
   to ~3e-12 of peak). `docs/physics.md` §14. (GitHub #4 / GEN-47.)
 
-- [ ] **9.13 Release 0.2.0** + docs + example. Scope: S. Deps: 9.12.
+- [x] **9.13 Release 0.2.0** + docs + example. Scope: S. Deps: 9.12.
+  → **released**: version cut 0.1.0 → 0.2.0 (`crates/optics-inverse`),
+  CHANGELOG `[optics-inverse 0.2.0]` section (tasks 9.11–9.13 + the
+  clippy-1.98 fix), docs/example shipped with 9.12 (`docs/physics.md` §14,
+  `examples/crlb_doe.rs` + `examples/crlb_merit.py`,
+  `docs/architecture.md` §7 marked Milestone B released). (GitHub #5 /
+  GEN-48.)
 
 ### Milestone C — deep surrogates (optics-inverse 0.3.0, feature `dl`)
 

@@ -35,30 +35,6 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   (`cargo test -p optics-studio`); wasm leak guard re-passed; verified
   end-to-end in headless chromium (import → edit → live preview →
   carrier sliders → 10.3 worker run). (GitHub #9 / GEN-52.)
-- Phase-9 task 9.12 — **custom-merit implementation + CRLB worked
-  example** (implements ADR-9.11 §8): feature `py` (`optics-inverse`
-  only; default features unchanged, CI stays Python-free) adds `PyMerit`,
-  an embedded-CPython (pyo3 0.29 `auto-initialize`) adapter over the 0.1.0
-  `Merit` seam — the observation is presented to user code as a read-only
-  float64 ndarray shaped `(C, B, S, Ny, Nx)` plus a metadata dict, with
-  Python exceptions wrapped as `InverseError::Python` and an optional
-  `merit_grad` callable feeding the 9.9 adjoint. New `gradcheck` module
-  (no feature): FD-on-observation central differences, the ADR's shipped
-  check helper (`assert_close` on a pixel window), and `FdObsMerit`, the
-  wrapper that makes opaque merits adjoint-consumable at window scale.
-  Worked example `examples/crlb_doe.rs` + `examples/crlb_merit.py`: the
-  A-optimal CRLB trace for source-position estimation (Poisson +
-  gaussian read-noise weighting; scene-stencil derivatives keep the
-  adjoint seed on the intensity channel) optimized on a 24×24 DOE
-  window via `grid_gradient`; the analytic user gradient is validated
-  against FD before descent, and the event-camera log-ratio variant
-  (CodedEvents delta-method weights) runs through the FD fallback.
-  Validation: `tests/hypercam_forward.rs` cross-checks the Rust render
-  chain against a trained thickness map exported from hypercam
-  `coded_mask.py` (verbatim ASM/relay/CRLB model, reduced scale;
-  element-for-element `Observation` compare, agreement ~3e-12 of peak;
-  export script included). Docs: `docs/physics.md` §14,
-  `docs/architecture.md` §7. (GitHub #4 / GEN-47.)
 - Phase-10 task 10.3 — **inverse run controls + convergence plot**
   (`crates/studio`, extends the crate 10.2 created). Host-testable run core
   (`run/`): `RunJob` — a **serializable** description of one inverse run
@@ -109,14 +85,6 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   and the shared radius/frequency scrubber. ADR-10.0 Q4 resolved: 2D
   `ImageData` canvas backend (not WebGL). No physics in the UI crate — every
   metric number comes from `optics-core` APIs. (GitHub #10 / GEN-53.)
-- Phase-9 task 9.11 — custom merit frontend ADR **accepted**: pyo3+numpy
-  behind feature `py` (Rust binary embeds the Python interpreter), layered
-  gradients for user merits (optional user-supplied `obs_gradient`
-  callable, automatic FD-on-obs fallback, shipped gradient check helper);
-  expression DSL deferred to the Phase-10 UI ADR, extension-module
-  packaging deferred to 0.2.x (`docs/adr-9.11-custom-merit-frontend.md`).
-  User decision via the GEN-46 question card, 2026-10-14. Docs only —
-  implementation is task 9.12. (GitHub #3 / GEN-46.)
 - Phase-10 task 10.0 — UI framework ADR **accepted**: dioxus, pinned
   `=0.7.10`, web target (`wasm32-unknown-unknown`), CSR-only; leptos
   0.8.22 recorded as fallback (`docs/adr-10.0-ui-framework.md`). Ratifies
@@ -151,14 +119,6 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
-- `optics-inverse`: cleared six clippy-1.98 lints (`needless_range_loop`,
-  `Ok(…?)` redundant wrap, `neg_cmp_op_on_partial_ord`, `manual_clamp`,
-  `manual_range_contains`, identity-op in a test) that had begun failing the
-  workspace `cargo clippy -q --all-targets -- -D warnings` gate after the
-  toolchain bump. Behavior-preserving; the crate's tests are unchanged and
-  green. Recorded separately from task 10.2 — the `optics-studio` crate is
-  new and touches no solver code — but committed first so the aggregate
-  gate is green for the feature commit.
 - `optics-zemax`: `agf` NM-line nd/Vd scan compiles on rustc ≥ 1.98
   (`Range::contains` received the `find` closure's `&&f64`; deref to
   `&f64`). Build-only — no behaviour change; surfaced when
@@ -196,6 +156,64 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   not text, not binary-ZMX blocks, no zlib streams). Supported corpus =
   text `.zmx`; export from OpticStudio (File > Save As > Text) for
   batch designs.
+
+## [optics-inverse 0.2.0] - 2026-10-15
+
+Phase 9 Milestone B close-out — **custom-merit frontend release of the
+`optics-inverse` crate**. User-defined merits in Python (feature `py`,
+ADR-9.11) attach at the 0.1.0 `Merit` seam with no solver changes; the
+worked example optimizes a Fisher/CRLB A-optimal DOE window and the
+render chain is cross-checked against a trained hypercam thickness map.
+Physics documented in `docs/physics.md` §14, frontend decision in
+`docs/adr-9.11-custom-merit-frontend.md`, crate architecture in
+`docs/architecture.md` §7. Milestone C (`burn` surrogates, 0.3.0,
+feature `dl`) follows per `tasks/todo.md`.
+
+### Added
+
+- Phase-9 task 9.12 — **custom-merit implementation + CRLB worked
+  example** (implements ADR-9.11 §8): feature `py` (`optics-inverse`
+  only; default features unchanged, CI stays Python-free) adds `PyMerit`,
+  an embedded-CPython (pyo3 0.29 `auto-initialize`) adapter over the 0.1.0
+  `Merit` seam — the observation is presented to user code as a read-only
+  float64 ndarray shaped `(C, B, S, Ny, Nx)` plus a metadata dict, with
+  Python exceptions wrapped as `InverseError::Python` and an optional
+  `merit_grad` callable feeding the 9.9 adjoint. New `gradcheck` module
+  (no feature): FD-on-observation central differences, the ADR's shipped
+  check helper (`assert_close` on a pixel window), and `FdObsMerit`, the
+  wrapper that makes opaque merits adjoint-consumable at window scale.
+  Worked example `examples/crlb_doe.rs` + `examples/crlb_merit.py`: the
+  A-optimal CRLB trace for source-position estimation (Poisson +
+  gaussian read-noise weighting; scene-stencil derivatives keep the
+  adjoint seed on the intensity channel) optimized on a 24×24 DOE
+  window via `grid_gradient`; the analytic user gradient is validated
+  against FD before descent, and the event-camera log-ratio variant
+  (CodedEvents delta-method weights) runs through the FD fallback.
+  Validation: `tests/hypercam_forward.rs` cross-checks the Rust render
+  chain against a trained thickness map exported from hypercam
+  `coded_mask.py` (verbatim ASM/relay/CRLB model, reduced scale;
+  element-for-element `Observation` compare, agreement ~3e-12 of peak;
+  export script included). Docs: `docs/physics.md` §14,
+  `docs/architecture.md` §7. (GitHub #4 / GEN-47.)
+- Phase-9 task 9.11 — custom merit frontend ADR **accepted**: pyo3+numpy
+  behind feature `py` (Rust binary embeds the Python interpreter), layered
+  gradients for user merits (optional user-supplied `obs_gradient`
+  callable, automatic FD-on-obs fallback, shipped gradient check helper);
+  expression DSL deferred to the Phase-10 UI ADR, extension-module
+  packaging deferred to 0.2.x (`docs/adr-9.11-custom-merit-frontend.md`).
+  User decision via the GEN-46 question card, 2026-10-14. Docs only —
+  implementation is task 9.12. (GitHub #3 / GEN-46.)
+
+### Fixed
+
+- `optics-inverse`: cleared six clippy-1.98 lints (`needless_range_loop`,
+  `Ok(…?)` redundant wrap, `neg_cmp_op_on_partial_ord`, `manual_clamp`,
+  `manual_range_contains`, identity-op in a test) that had begun failing the
+  workspace `cargo clippy -q --all-targets -- -D warnings` gate after the
+  toolchain bump. Behavior-preserving; the crate's tests are unchanged and
+  green. Recorded separately from task 10.2 — the `optics-studio` crate is
+  new and touches no solver code — but committed first so the aggregate
+  gate is green for the feature commit.
 
 ## [optics-inverse 0.1.0] - 2026-10-14
 
