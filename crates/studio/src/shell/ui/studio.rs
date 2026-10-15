@@ -655,7 +655,7 @@ impl Shell {
                 self.edited.set(true);
                 self.selected.set(Some(pos));
                 self.surfaces.set(surfaces);
-                self.run_preview();
+                self.refresh_forward();
             }
             Err(e) => self.push_toast(format!("edit: {e}")),
         }
@@ -700,7 +700,7 @@ impl Shell {
                 };
                 self.surfaces.set(surfaces);
                 self.selected.set(next);
-                self.run_preview();
+                self.refresh_forward();
             }
             Err(e) => self.push_toast(format!("edit: {e}")),
         }
@@ -717,7 +717,7 @@ impl Shell {
             Ok(()) => {
                 self.surfaces.set(surfaces);
                 self.edited.set(true);
-                self.run_preview();
+                self.refresh_forward();
             }
             Err(e) => self.push_toast(format!("edit: {e}")),
         }

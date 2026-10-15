@@ -184,6 +184,12 @@ are protected. "Apply to Text" serializes the working copy through
 `ZmxSystem::to_zmx` into the authoritative `.zmx` text and re-parses, so
 a built system persists and re-imports identically (round-trip tested).
 
+**Live layout.** The Lens Data Editor tab carries a Live layout panel
+below the table: the beamline strip plus a PSF thumbnail and the sampling
+banner line. Element operations refresh the forward pipeline
+synchronously, so inserting, editing, or deleting an element redraws the
+schematic in the same tab — no tab switch needed.
+
 
 ### 3.1 Application shell (10.1)
 

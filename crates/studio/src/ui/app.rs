@@ -10,6 +10,7 @@ use dioxus::prelude::*;
 use crate::shell::ui::panels::{CarrierPanel, PrescriptionTable, SetupPanels, TextEditor};
 use crate::shell::ui::studio::Shell;
 use crate::shell::ui::style as shell_style;
+use crate::shell::ui::viewport::LiveLayout;
 use crate::shell::ui::{
     ModeSwitch, ShellColumn, ShellPreview, ShellSetup, ShellToasts, WorkspaceTab, WorkspaceTabs,
 };
@@ -68,7 +69,7 @@ pub fn App() -> Element {
     let tab = shell.tab();
     let doc = shell.doc_name();
     let workspace = match tab {
-        WorkspaceTab::LensData => rsx! { PrescriptionTable {} },
+        WorkspaceTab::LensData => rsx! { PrescriptionTable {} LiveLayout {} },
         WorkspaceTab::Text => rsx! { TextEditor {} },
         WorkspaceTab::Layout => rsx! { ShellPreview {} },
         WorkspaceTab::Setup => rsx! { SetupPanels {} },

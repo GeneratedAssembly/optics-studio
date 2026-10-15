@@ -22,12 +22,18 @@ pub fn StripSvg() -> Element {
     if strip.nodes.is_empty() {
         return rsx! {
             svg { class: "strip-svg", view_box: "0 0 720 150",
-                text { x: "12", y: "80", class: "strip-empty", "beamline strip — import a .zmx" }
+                text { x: "12", y: "80", class: "strip-empty",
+                    "beamline strip — press New System or import a .zmx"
+                }
             }
         };
     }
 
-    let track = strip.track_m.max(1e-9) * 1e3; // mm
+    let track_real = strip.track_m * 1e3; // mm
+    // Degenerate freshly-built systems stack every surface at z = 0; a
+    // scale floor keeps the first inserted element readable instead of
+    // dividing the usable width by ~0.
+    let track = track_real.max(1.0);
     let x_right = VB_W - PAD_R;
     let meta_y = VB_H - 6.0;
     let usable = VB_W - PAD_L - PAD_R;
@@ -84,7 +90,7 @@ pub fn StripSvg() -> Element {
                 {render_glyph(g, i)}
             }
             text { class: "strip-meta", x: "{PAD_L}", y: "{meta_y}",
-                "track {track:.2} mm · max semi {max_semi:.2} mm"
+                "track {track_real:.2} mm · max semi {max_semi:.2} mm"
             }
         }
     }

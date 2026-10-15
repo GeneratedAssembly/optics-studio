@@ -1,5 +1,8 @@
 //! Center viewport: live preview image, readouts, sampling banner, and the
-//! Beamline schematic strip (spec §3.1–§3.2, §5).
+//! Beamline schematic strip (spec §3.1–§3.2, §5), plus [`LiveLayout`] —
+//! the compact live strip + PSF thumbnail mounted inside the Lens Data
+//! Editor so the system visualizes in real time as elements are added
+//! (GEN-57 follow-up).
 
 use dioxus::prelude::*;
 
@@ -84,6 +87,40 @@ pub fn Viewport() -> Element {
             }
             if let Some(a) = advisory {
                 div { class: "banner banner-advisory", "{a}" }
+            }
+        }
+    }
+}
+
+/// Live layout panel (GEN-57 follow-up): the beamline strip and a PSF
+/// thumbnail mounted *inside* the Lens Data Editor tab, so the system
+/// visualizes in real time while elements are inserted, edited, or
+/// deleted — the element operations refresh the forward pipeline
+/// synchronously, and this panel subscribes to the same signals the
+/// Layout tab uses.
+#[component]
+pub fn LiveLayout() -> Element {
+    let studio = use_context::<Shell>();
+    let strip = studio.strip();
+    let image = studio.image_url();
+    let banner = studio.banner();
+    let track_mm = strip.track_m * 1e3;
+    let nodes = strip.nodes.len();
+    rsx! {
+        div { class: "panel live-layout",
+            h2 { "Live layout" }
+            StripSvg {}
+            div { class: "live-layout-row",
+                if let Some(url) = image {
+                    img { class: "psf-img mini", src: "{url}" }
+                }
+                div { class: "small",
+                    div { "track {track_mm:.2} mm · {nodes} strip nodes" }
+                    div { "updates as you insert, edit, or delete elements" }
+                    if let Some(b) = banner {
+                        div { class: "banner {b.severity.css_class()} mini", "{b.headline}" }
+                    }
+                }
             }
         }
     }

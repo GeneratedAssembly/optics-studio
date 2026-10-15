@@ -9,6 +9,14 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- Live system visualization while editing (GEN-57 follow-up): the Lens
+  Data Editor now carries a Live layout panel — beamline strip, PSF
+  thumbnail, and the sampling banner line — below the table. Element
+  operations (insert / delete / stop / apply) refresh the forward
+  pipeline synchronously instead of the mode-dependent preview, so the
+  schematic redraws the moment an element is added. The strip scale has a
+  1 mm floor so a freshly built system stays readable.
+
 - UI reorganization + element insertion (GEN-57): the optics-studio shell
   now follows Zemax's workspace language — a System Explorer tree (left),
   a tabbed document workspace (Lens Data Editor, Prescription Text,

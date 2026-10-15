@@ -36,6 +36,10 @@ table.surf tbody tr { cursor: pointer; }
 /* GEN-57 summary card */
 .sum-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: #7d8ea3; padding: 1.5px 0; }
 .sum-row .val { color: #d7dce3; font-family: ui-monospace, monospace; text-align: right; }
+/* GEN-57 live layout panel inside the Lens Data Editor */
+.live-layout-row { display: flex; gap: 14px; align-items: flex-start; margin-top: 6px; }
+.psf-img.mini { width: 240px; max-width: 45%; flex: none; }
+.banner.mini { padding: 4px 8px; margin-top: 4px; }
 .panel { background: #161c24; border: 1px solid #232c38; border-radius: 8px; padding: 10px 12px; }
 .panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #7d8ea3; margin: 0 0 8px; }
 button { font: inherit; }
