@@ -425,7 +425,8 @@ one propagation-level type is a later API decision.
   later, `burn` deep surrogates last — **Milestones A and B complete,
   released as 0.1.0 and 0.2.0**, see §7; Milestone C
   surrogates follow), `optics-studio` (web UI, opt-in workspace
-  member). Design choices below keep these open.
+  member — **Phase 10 complete, released as 0.1.0**, see §8). Design
+  choices below keep these open.
 
 **Forward-compatibility design choices (decided at Phase-3 planning):**
 
@@ -492,3 +493,54 @@ respect (ADR-9.11 §8). Examples:
 `crates/optics-inverse/examples/coded_doe.rs` (GS top-hat beam shaper),
 `crates/optics-inverse/examples/crlb_doe.rs` (CRLB user merit optimized
 via the adjoint, `--features py`).
+
+## 8. Workspace crate: `optics-studio` (Phase 10 — 0.1.0 released)
+
+The web UI over the headless APIs (ADR-10.0: dioxus `=0.7.10`,
+`wasm32-unknown-unknown`, client-side rendering only). Dependency
+direction stays one-way: `optics-studio` calls the public APIs of
+`optics-core`, `optics-zemax`, and `optics-inverse` — **no physics in
+the UI crate** (spec §6): every displayed number comes from a headless
+crate call, unit conversion, or display normalization. The crate is an
+**opt-in workspace member**: root `default-members` exclude it, so
+`cargo fmt/clippy/doc/test` at the root never build dioxus; the native
+half is gated by `cargo test -p optics-studio` and the wasm half by the
+leak-guard pair `cargo check|clippy -p optics-studio --target
+wasm32-unknown-unknown`.
+
+| Module | Role | Public surface |
+|---|---|---|
+| `viewmodel` (native) | Pure DOM-free viewport model: colormaps, intensity mapping, metric frames via `optics_core::analysis` bindings, SVG chart data, cross-sections, sampling banner, four-way engine dispatch, G-6 synthetic-reference recipe, demo bundle | `StudioModel` (`demo` / `live`), `Frame`, `make_frame`, `ViewportState`, `Colormap`, `Banner`/`from_asm`, `EngineSettings`, `build_reference` |
+| `run` (native) | Host-testable inverse-run core: serializable `RunJob` (carrier/source/grid/merit/solver/budget), chunked `RunSession`, `RunController` phase machine, bincode worker messages | `RunJob`, `MeritSpec` (+ `set_captured_merit`), `SolverSpec`, `RunSession`, `RunController`, `ChunkReport` |
+| `bridge` (wasm) | Dedicated-web-worker transport (ADR-10.0 Q3) with inline main-thread fallback; the single `#[wasm_bindgen(start)]` dispatches page vs worker scope | `RunBridge`, `RunOutput`, `schedule` |
+| `shell` (native + `ui` wasm) | Task-10.1 editor shell: `.zmx`/`.AGF` import state, edited-surface → simulation-beamline plan, schematic strip, source picker, five-way engine picker (G-8 adapter incl. Rayleigh–Sommerfeld), live-preview raster + BMP encode, live G-6 reference builder, demo carrier; `shell/ui` = dioxus editor column, live preview, pickers | `Shell` (signal bundle), `SimPlan`/`build_plan`, `SourceSpec`, `dispatch::EngineSettings`, `reference::forward_reference`, `carrier::demo_carrier` |
+| `app` (wasm) | Task-10.2 PSF/metrics viewport: band tabs, 2D-`ImageData` canvas (ADR-10.0 Q4), cross-sections, EE/MTF/Strehl/Spot/Wavefront panels, sampling banner | `Studio` component tree |
+| `ui` (wasm) | App root `App`: three-region spec §3 layout (shell + viewport + setup, run console below); task-10.3 run console (job form, worker transport, convergence plot, apply-best continuation) | `App`, `RunConsole`, `ConvergencePlot` |
+
+**Round-trip seam (task 10.4):** `ui::App` provides
+`Signal<Rc<StudioModel>>` as context, seeded with the demo bundle. Every
+shell publish — forward simulation or carrier preview — replaces it with
+one live frame (`StudioModel::live`: metrics precomputed through
+`viewmodel::metrics::make_frame`, banner from the run's real ASM
+diagnostics), so the viewport analyzes the PSF just simulated. The live
+forward path attaches the synthetic G-6 reference when the geometry
+supports it (point source, air, common engine, stop flagged, focus
+resolvable on the measured grid); otherwise the Strehl panel shows its
+no-reference state. The run console captures the viewport's current
+frame as the MSE-to-target / −Strehl merit target
+(`RunJob::set_captured_merit`, typed length validation against the
+observation grid). Import → simulate → analyze → inverse-design closes
+in the UI; verified headless in chromium (Phase-10 checkpoint).
+
+**Packaging (ADR-10.0 Q5, resolved at 10.4):** web-only static bundle
+via `dx build --platform web --release` plus the unhashed
+`assets/optics-studio_bg.wasm` alias the blob worker needs
+(`crates/studio/README.md`); desktop artifacts not shipped.
+
+**Seams for 0.2.x:** the dispatch overlap flagged at 10.1 —
+`shell::dispatch` (five-way, incl. Rayleigh–Sommerfeld) vs
+`viewmodel::engine` (four-way core `Engine`) — stays deliberate;
+unifying them into `viewmodel` and covering RS in the reference builder
+is the first follow-up. The viewport model is the natural attachment
+point for session persistence (spec gap G-9) and dataset export;
+`RunJob` is already bincode-serializable for both.

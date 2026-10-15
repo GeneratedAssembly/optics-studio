@@ -10,7 +10,9 @@ use crate::shell::carrier::demo_carrier;
 use crate::shell::dispatch::{self, Banner, BannerLevel, EnginePick, EngineSettings};
 use crate::shell::prescription::{StripModel, build_plan, strip_from_design};
 use crate::shell::preview::{bmp_data_url, render_psf};
+use crate::shell::reference;
 use crate::shell::source::SourceSpec;
+use crate::viewmodel::demo::StudioModel;
 
 /// Which workflow the shell is presenting (spec §3: mode selects active
 /// panels).
@@ -89,14 +91,26 @@ pub struct Shell {
     pub toasts: Signal<Vec<Toast>>,
     pub preview_gen: Signal<usize>,
     pub parse_gen: Signal<usize>,
+
+    // — viewport round-trip seam (task 10.4) —
+    /// The task-10.2 viewport model, shared as context at the app root.
+    /// Every published preview frame replaces it, so the metrics panels
+    /// analyze the *same* PSF the preview renders.
+    pub viewport_model: Signal<Rc<StudioModel>>,
+    /// The initial demo model, restored when the preview is cleared.
+    /// Held as a signal so `Shell` stays `Copy`.
+    demo_model: Signal<Rc<StudioModel>>,
 }
 
 impl Shell {
     /// Fresh session: no document, sensible preview defaults (small grid
     /// keeps the synchronous preview responsive per ADR-10.0 Q3).
-    pub fn new() -> Shell {
+    /// `viewport_model` starts holding the demo bundle; `clear_preview`
+    /// restores it.
+    pub fn new(viewport_model: Signal<Rc<StudioModel>>) -> Shell {
         let carrier = demo_carrier();
         let values = carrier.params().values();
+        let demo_model = Signal::new(Rc::clone(&viewport_model.peek()));
         Shell {
             mode: Signal::new(AppMode::Forward),
             doc_name: Signal::new(String::new()),
@@ -136,6 +150,8 @@ impl Shell {
             toasts: Signal::new(Vec::new()),
             preview_gen: Signal::new(0),
             parse_gen: Signal::new(0),
+            viewport_model,
+            demo_model,
         }
     }
 
@@ -420,6 +436,40 @@ impl Shell {
                 None
             }
         };
+        // Task-10.4 round-trip seam: hand this frame to the task-10.2
+        // viewport so import → simulate → **analyze** runs on the same PSF.
+        // The forward path adds the synthetic G-6 reference when the
+        // geometry supports one (point source, air, common engine, stop
+        // flagged); the carrier path ships without a reference.
+        let reference = match from {
+            PreviewSource::Forward => {
+                let point = match *self.source.peek() {
+                    SourceSpec::Point {
+                        distance_m,
+                        amplitude,
+                        ..
+                    } => Some((distance_m, amplitude)),
+                    _ => None,
+                };
+                reference::forward_reference(
+                    settings,
+                    &psf,
+                    band.lambda(),
+                    point,
+                    z,
+                    medium,
+                    aperture,
+                )
+            }
+            PreviewSource::Carrier => None,
+        };
+        let label = format!("live {:.1} nm", band.lambda() * 1e9);
+        self.viewport_model.set(Rc::new(StudioModel::live(
+            label,
+            &psf,
+            reference.as_ref(),
+            banner.clone(),
+        )));
         self.psf.set(Some(psf));
         self.psf_from.set(from);
         self.strip.set(strip);
@@ -444,6 +494,7 @@ impl Shell {
         self.suggestion.set(None);
         self.phase_steps.set(Vec::new());
         self.stale.set(true);
+        self.viewport_model.set(Rc::clone(&self.demo_model.peek()));
     }
 
     /// Push a dismissible toast (keeps the latest four).
@@ -540,12 +591,6 @@ pub fn builtin_glass_names() -> Vec<String> {
         .iter()
         .map(|e| e.name.to_string())
         .collect()
-}
-
-impl Default for Shell {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// Callable getters mirroring the signal fields (`studio.doc_name()` etc.).

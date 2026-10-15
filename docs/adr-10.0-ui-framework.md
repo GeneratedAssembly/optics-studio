@@ -80,13 +80,27 @@ the leak guard.
   CSS box upscales with `image-rendering: pixelated` so PSF detail survives
   magnification. Decision recorded in
   `crates/studio/src/app/canvas.rs`.
-- **Q5 — Packaging for 10.4:** deferred to task 10.4; web-only is the
-  default, desktop artifact optional.
+- **Q5 — Packaging for 10.4:** **resolved in task 10.4** — web-only.
+  The release artifact is the static bundle from `dx build --platform
+  web --release` (`crates/studio/target/dx/optics-studio/release/web/
+  public/`): `index.html` + hashed `assets/` (≈2.9 MB: loader JS +
+  wasm), served from any static host. One packaging step is required:
+  copy the hashed `assets/optics-studio_bg-<hash>.wasm` to
+  `assets/optics-studio_bg.wasm` — dioxus 0.7.9's blob-worker resolves
+  the hashed URL to `/./assets/...`, which `fetch` rejects, and then
+  falls back to the unhashed name (split-linking, ADR-10.0 Q3). Without
+  the alias the solver worker hangs; with it, the full round-trip runs
+  headless in chromium (600 evals / 10 chunks / 740 ms, task 10.4
+  verification). Desktop artifacts (`dx bundle --platform desktop`)
+  stay optional and are **not** shipped in 0.1.0. Steps recorded in
+  `crates/studio/README.md`.
 - **Q6 — Seed policy on wasm:** unchanged — solver runs pass
   `StochasticConfig::seed = Some(..)` (`docs/ux/spec.md` §3.4) until
   `optics-inverse` ships a `getrandom`-js feature.
-- **Q7 — Session state:** deferred to 10.1+; a saved "studio session" file
-  format (spec gap G-9) is out of scope for 10.4 unless the plan changes.
+- **Q7 — Session state:** confirmed out of scope at 10.4 — the saved
+  "studio session" file format (spec gap G-9) remains deferred; the
+  0.1.0 release carries import (.zmx + .AGF) and the round-trip seam
+  instead.
 
 ## Consequences
 

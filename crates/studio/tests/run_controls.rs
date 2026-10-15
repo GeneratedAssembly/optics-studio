@@ -123,3 +123,47 @@ fn reports_are_serializable_for_the_worker() {
     let back: ChunkReport = bincode::deserialize(&bytes).unwrap();
     assert_eq!(report, back);
 }
+
+#[test]
+fn captured_merit_validates_against_the_observation_grid() {
+    // Task 10.4 round-trip seam: the viewport capture must match the
+    // job's observation grid, else it is a typed error.
+    let mut job = RunJob::demo_ee_focus();
+    let expected = job.grid.nx * job.grid.ny;
+    let err = job
+        .set_captured_merit(
+            optics_studio::run::job::CaptureKind::MseToTarget,
+            vec![1.0; 4],
+        )
+        .expect_err("wrong length must fail");
+    assert!(
+        err.contains(&expected.to_string()),
+        "error names the expected count: {err}"
+    );
+
+    let samples: Vec<f64> = (0..expected).map(|i| (i as f64) * 0.125).collect();
+    job.set_captured_merit(
+        optics_studio::run::job::CaptureKind::MseToTarget,
+        samples.clone(),
+    )
+    .expect("grid-sized capture accepted");
+    assert_eq!(job.merit.label(), "mse_to_target");
+    assert_eq!(
+        job.merit_selector().channel,
+        optics_studio::run::job::ChannelSpec::Intensity
+    );
+    let bytes = bincode::serialize(&job).unwrap();
+    let back: RunJob = bincode::deserialize(&bytes).unwrap();
+    assert_eq!(job, back, "captured merit survives the worker round-trip");
+
+    let mut bad = samples.clone();
+    bad[3] = f64::NAN;
+    job.set_captured_merit(optics_studio::run::job::CaptureKind::Strehl, samples)
+        .expect("strehl capture accepted");
+    assert_eq!(job.merit.label(), "neg_strehl");
+
+    let err = job
+        .set_captured_merit(optics_studio::run::job::CaptureKind::Strehl, bad)
+        .expect_err("non-finite samples must fail");
+    assert!(err.contains("non-finite"));
+}

@@ -15,7 +15,9 @@ use dioxus::prelude::*;
 
 use crate::bridge::{RunBridge, RunOutput, schedule};
 use crate::run::controller::{RunController, RunPhase};
-use crate::run::job::{DesignSpec, MaterialSpec, MeritSpec, RunJob, SolverSpec, SourceSpec};
+use crate::run::job::{
+    CaptureKind, DesignSpec, MaterialSpec, MeritSpec, RunJob, SolverSpec, SourceSpec,
+};
 
 use super::convergence::ConvergencePlot;
 
@@ -175,6 +177,10 @@ pub fn RunConsole() -> Element {
     let mut controller = use_signal(RunController::new);
     let log_y = use_signal(|| true);
     let cell = use_hook(|| Rc::new(RefCell::new(Holder::default()))).clone();
+    // Shared viewport model (task-10.4 round-trip seam): the merit editor
+    // captures its current frame as an MSE/Strehl target.
+    let viewport_model = use_context::<Signal<Rc<crate::viewmodel::demo::StudioModel>>>();
+    let capture_note = use_signal(String::new);
 
     let phase = controller.read().phase();
     let running = matches!(phase, RunPhase::Running | RunPhase::Stopping);
@@ -570,22 +576,61 @@ pub fn RunConsole() -> Element {
             _ => (j.merit.label().to_string(), 0.0, 0.0, j.merit_selector()),
         }
     };
+    let target_len = match &job.read().merit {
+        MeritSpec::MseToTarget { target, .. } => target.len(),
+        MeritSpec::Strehl { reference, .. } => reference.len(),
+        _ => 0,
+    };
+    let viewport_origin = viewport_model.read().origin;
     let on_merit_kind = {
         move |kind: String| {
             let mut job = job;
-            let mut j = job.write();
-            let selector = j.merit_selector();
-            j.merit = match kind.as_str() {
-                "spot_rms" => MeritSpec::SpotRms { selector },
-                "neg_mtf" => MeritSpec::Mtf {
-                    freq: 50.0e3,
-                    selector,
-                },
-                _ => MeritSpec::EncircledEnergy {
-                    radius: 60e-6,
-                    selector,
-                },
-            };
+            let mut capture_note = capture_note;
+            match kind.as_str() {
+                "mse_to_target" | "neg_strehl" => {
+                    // Task-10.4 round-trip seam: capture the viewport's
+                    // current frame (the live model is a single frame;
+                    // the demo model's last tab) as the merit target.
+                    let samples = viewport_model
+                        .read()
+                        .frames
+                        .last()
+                        .map(|f| f.psf.samples().to_vec());
+                    let capture = if kind == "mse_to_target" {
+                        CaptureKind::MseToTarget
+                    } else {
+                        CaptureKind::Strehl
+                    };
+                    let mut j = job.write();
+                    match samples
+                        .filter(|s| !s.is_empty())
+                        .map(|s| j.set_captured_merit(capture, s))
+                    {
+                        Some(Ok(())) => capture_note.set(String::new()),
+                        Some(Err(e)) => capture_note.set(format!(
+                            "capture failed: {e} — match the frame to the observation grid first"
+                        )),
+                        _ => capture_note
+                            .set("capture failed: the viewport has no frame to capture".into()),
+                    }
+                }
+                _ => {
+                    let mut j = job.write();
+                    let selector = j.merit_selector();
+                    j.merit = match kind.as_str() {
+                        "spot_rms" => MeritSpec::SpotRms { selector },
+                        "neg_mtf" => MeritSpec::Mtf {
+                            freq: 50.0e3,
+                            selector,
+                        },
+                        _ => MeritSpec::EncircledEnergy {
+                            radius: 60e-6,
+                            selector,
+                        },
+                    };
+                    capture_note.set(String::new());
+                }
+            }
         }
     };
     let on_ee_radius = {
@@ -822,6 +867,8 @@ pub fn RunConsole() -> Element {
                         ("neg_encircled_energy".to_string(), "−EE at radius".into()),
                         ("spot_rms".to_string(), "Spot RMS radius".into()),
                         ("neg_mtf".to_string(), "−MTF at frequency".into()),
+                        ("mse_to_target".to_string(), "MSE to captured frame".into()),
+                        ("neg_strehl".to_string(), "−Strehl vs captured frame".into()),
                     ],
                     on_pick: on_merit_kind,
                 }
@@ -833,7 +880,61 @@ pub fn RunConsole() -> Element {
                 }
                 Num { label: "selector band (blank = sum)".to_string(), initial: selector.band.map(|b| b.to_string()).unwrap_or_default(), on_commit: move |raw| on_selector_field(("band".to_string(), raw)) }
                 Num { label: "selector scene (blank = sum)".to_string(), initial: selector.scene.map(|s| s.to_string()).unwrap_or_default(), on_commit: move |raw| on_selector_field(("scene".to_string(), raw)) }
-                p { class: "note", "MSE-to-target and Strehl merits need a captured reference frame — wired with the viewport (task 10.2)." }
+                if merit_label == "mse_to_target" || merit_label == "neg_strehl" {
+                    div { class: "field",
+                        button {
+                            class: "start",
+                            onclick: {
+                                let mut job = job;
+                                let mut capture_note = capture_note;
+                                move |_| {
+                                    let kind = match job.read().merit {
+                                        MeritSpec::MseToTarget { .. } => CaptureKind::MseToTarget,
+                                        MeritSpec::Strehl { .. } => CaptureKind::Strehl,
+                                        _ => return,
+                                    };
+                                    let samples = viewport_model
+                                        .read()
+                                        .frames
+                                        .last()
+                                        .map(|f| f.psf.samples().to_vec());
+                                    let mut j = job.write();
+                                    match samples
+                                        .filter(|s| !s.is_empty())
+                                        .map(|s| j.set_captured_merit(kind, s))
+                                    {
+                                        Some(Ok(())) => capture_note.set(String::new()),
+                                        Some(Err(e)) => capture_note.set(format!(
+                                            "capture failed: {e} — match the frame to the observation grid first"
+                                        )),
+                                        _ => capture_note.set(
+                                            "capture failed: the viewport has no frame to capture"
+                                                .into(),
+                                        ),
+                                    }
+                                }
+                            },
+                            "Re-capture viewport frame"
+                        }
+                        span { class: "note",
+                            "target: {target_len} samples · viewport: {viewport_origin} data"
+                        }
+                    }
+                    if !capture_note.read().is_empty() {
+                        p { class: "error", "{capture_note.read().clone()}" }
+                    }
+                    p { class: "note",
+                        "Round-trip seam (task 10.4): pick this merit to capture the viewport's \
+                         current frame — the live PSF after Load sample / import — as the \
+                         optimization target."
+                    }
+                } else {
+                    p { class: "note",
+                        "MSE-to-target and −Strehl capture the viewport's current frame as the \
+                         merit target (task 10.4 round-trip: analyze → inverse-design the \
+                         analyzed PSF)."
+                    }
+                }
             }
 
             div { class: "run",

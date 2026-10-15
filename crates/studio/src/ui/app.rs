@@ -46,7 +46,17 @@ details pre { background: #0c0f15; padding: 0.6rem; border-radius: 6px; font-siz
 /// The optics-studio app root: shell + viewport + run console.
 #[component]
 pub fn App() -> Element {
-    let _shell = use_context_provider(Shell::new);
+    // Task-10.4 round-trip seam: the viewport model is shared context at
+    // the root — the shell replaces it with every live PSF (analyze the
+    // frame you simulated), and the run console captures frames from it
+    // as MSE/Strehl merit targets.
+    let viewport_model = use_context_provider(|| {
+        Signal::new(std::rc::Rc::new(
+            crate::viewmodel::demo::StudioModel::demo()
+                .unwrap_or_else(|e| panic!("demo model failed to build: {e}")),
+        ))
+    });
+    let _shell = use_context_provider(|| Shell::new(viewport_model));
     rsx! {
         style { "{CSS}" }
         style { {shell_style::CSS} }

@@ -26,22 +26,23 @@ use crate::viewmodel::state::ViewportState;
 
 /// The viewport root component.
 ///
-/// Frames come from [`StudioModel::demo`] until task 10.1 (the shell)
-/// supplies imported PSFs — the component tree is identical either way.
+/// The model is shared context provided at the app root ([`StudioModel`]
+/// starts as the demo bundle; the shell replaces it with every live PSF —
+/// the task-10.4 round-trip seam). The component tree is identical either
+/// way; reading the signal here subscribes the viewport to new frames.
 #[component]
 pub fn Studio() -> Element {
-    let model = use_context_provider(|| {
-        Rc::new(StudioModel::demo().unwrap_or_else(|e| panic!("demo model failed to build: {e}")))
-    });
+    let model = use_context::<Signal<Rc<StudioModel>>>();
     let view = use_signal(ViewportState::default);
+    let origin = model.read().origin;
 
     rsx! {
         div { class: "studio", style: STUDIO_CSS,
             header {
                 h1 { "optics-studio — PSF / metrics viewport" }
-                span { class: "phase", "task 10.2 · dioxus 0.7.10 · demo data" }
+                span { class: "phase", "task 10.2 · dioxus 0.7.10 · {origin} data" }
             }
-            banner::BannerView { banner: model.banner.clone() }
+            banner::BannerView { banner: model.read().banner.clone() }
             div { class: "columns", style: "display:flex; gap:16px; flex-wrap:wrap;",
                 viewport::IntensityColumn { view }
                 panels::MetricColumn { view }

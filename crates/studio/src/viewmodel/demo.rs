@@ -148,6 +148,10 @@ pub struct StudioModel {
     pub frames: Vec<Frame>,
     /// Sampling banner from the demo run's diagnostics.
     pub banner: Banner,
+    /// Where the frames come from: `"demo"` (the synthetic bundle) or
+    /// `"live"` (the shell's imported / carrier preview). The viewport
+    /// header and the run console's capture note read this.
+    pub origin: &'static str,
 }
 
 impl StudioModel {
@@ -166,7 +170,32 @@ impl StudioModel {
         let report = asm::sampling_report(&band, geom.image_distance, &AsmConfig::default());
         let banner = from_asm(&report);
 
-        Ok(Self { frames, banner })
+        Ok(Self {
+            frames,
+            banner,
+            origin: "demo",
+        })
+    }
+
+    /// Builds the live model from one shell preview frame (task 10.4
+    /// checkpoint wiring: import → simulate → **analyze** the same PSF).
+    ///
+    /// `reference` is the synthetic G-6 stand-in at the same grid/engine
+    /// when the shell can construct one (forward path, point source);
+    /// `None` leaves the Strehl panel in its no-reference state. Metrics
+    /// are precomputed through [`make_frame`], so every number still comes
+    /// from `optics_core::analysis` (spec §6).
+    pub fn live(
+        label: impl Into<String>,
+        psf: &Psf,
+        reference: Option<&Psf>,
+        banner: Banner,
+    ) -> Self {
+        Self {
+            frames: vec![make_frame(label, psf.clone(), reference, None)],
+            banner,
+            origin: "live",
+        }
     }
 
     /// The active frame, clamped to the frame list.
@@ -268,5 +297,29 @@ mod tests {
             .expect("wavefront fit ran");
         assert!(!wf.coefficients.is_empty());
         assert!(frames[1].metrics.marechal_strehl.is_some());
+    }
+
+    #[test]
+    fn live_model_single_frame_with_reference() {
+        let d = DemoBundle::build().unwrap();
+        let banner = StudioModel::demo().unwrap().banner;
+        let m = StudioModel::live(
+            "live 550 nm",
+            &d.measured,
+            Some(&d.reference),
+            banner.clone(),
+        );
+        assert_eq!(m.origin, "live");
+        assert_eq!(m.frames.len(), 1);
+        assert_eq!(m.frames[0].label, "live 550 nm");
+        assert_eq!(m.banner.severity, banner.severity);
+        // Metrics are precomputed: Strehl present with a reference, absent
+        // without one (the panel's no-reference state).
+        let s = m.frames[0].metrics.strehl.expect("reference given");
+        assert!(s > 0.0 && s < 1.0, "defocused live PSF: {s}");
+        assert!(!m.frames[0].metrics.ee.curve().1.is_empty());
+        let no_ref = StudioModel::live("live", &d.measured, None, banner);
+        assert!(no_ref.frames[0].metrics.strehl.is_none());
+        assert!(no_ref.frames[0].metrics.wavefront.is_none());
     }
 }

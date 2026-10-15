@@ -9,104 +9,10 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
-- Phase-10 task 10.1 — **UI shell: prescription editor + live Beamline
-  preview** (`crates/studio::shell`, mounted by `ui::App` in the spec §3
-  three-region layout): file panel (`.zmx` import + AGF catalog load +
-  bundled ACA254 sample + in-session recents), authoritative text mode
-  with ~250 ms debounced `ImportedSystem::parse_with` validation and
-  typed-error display, table mode with per-surface sliders + numeric
-  edits rebuilding the simulation beamline via the optics-zemax builder
-  mapping (bit-for-bit PSF parity test), paraxial EFL/BFL card with
-  file image-distance cross-check, WAVM/PWAV wavelength selector,
-  source picker (point / tilted plane wave / Gaussian + grid spec),
-  five-way engine picker (ASM / Fresnel transfer / convolution /
-  Fraunhofer / Rayleigh-Sommerfeld) with the G-8 error-unifying dispatch
-  adapter, regime auto-suggest, and §5.2 sampling banner through the
-  shared `viewmodel::banner`; Beamline schematic strip (SVG); carrier
-  sliders (demo singlet, `Carrier::params → build → Design::beamline →
-  psf`, 100 ms-throttled commits); stale-frame + typed-error toast
-  policy. Live preview pixels reuse `viewmodel::intensity` (no second
-  colormap pipeline). Fixes a latent boot bug in task-10.3 `bridge.rs`:
-  its `#[wasm_bindgen(start)]` made the dioxus loader skip `main()`, so
-  the app never mounted in a browser — the single start hook now
-  dispatches by scope (page → `ui::launch`, worker → handler register).
-  Deps added to the crate: `optics-zemax`, `base64`,
-  `wasm-bindgen-futures`, `gloo-timers/futures`. 16 native shell tests
-  (`cargo test -p optics-studio`); wasm leak guard re-passed; verified
-  end-to-end in headless chromium (import → edit → live preview →
-  carrier sliders → 10.3 worker run). (GitHub #9 / GEN-52.)
-- Phase-10 task 10.3 — **inverse run controls + convergence plot**
-  (`crates/studio`, extends the crate 10.2 created). Host-testable run core
-  (`run/`): `RunJob` — a **serializable** description of one inverse run
-  (design carrier, illumination, observation grid, built-in merit, solver,
-  budget/seed/scale, chunking) that the worker rebuilds into real
-  `optics-inverse` objects (closures cannot cross the worker boundary);
-  grid carriers are wrapped in an analytic relay so the design propagates
-  `z_after` to the detector (the grid builders' own trailing gap is 0).
-  `RunSession` — the **chunked** `solve` loop (spec §3.4, gap G-2): one
-  budget slice per call, carrying `Solution::best` into the next chunk via
-  `Params::set_values`, so Stop is "do not launch the next chunk"; chunk *k*
-  seeds `job.seed + k` (fresh stream per chunk, whole run reproducible);
-  wasm always passes `seed = Some(..)` (ADR-10.0 Q6; `getrandom/js` enabled
-  for the wasm target). `RunController` — pure Idle/Running/Stopping/
-  Finished/Failed machine + accumulated trace + Apply-best continuation +
-  reproducibility run card. Worker bridge (`bridge.rs`, wasm): solver runs
-  in a **dedicated web worker** with progress messages via `gloo-worker`
-  0.6 (ADR-10.0 Q3 — the worker-crate choice this task owned), with an
-  inline main-thread fallback transport yielding between chunks; the module
-  script path is discovered at runtime (bundler-agnostic). Run console UI
-  (`ui/`, dioxus): solver picker (random walk / annealing / Adam),
-  budget/seed/scale/random-init, Start/Stop, log-y SVG convergence plot
-  (`Solution::history`), progress readout, Apply-best, observation config
-  (bands/scenes/derivative channels/ASM) and built-in merit editor; MSE-to-
-  target and Strehl merit *frames* deferred to the viewport (10.2 capture).
-  `ui::App` now composes the 10.2 viewport above the console. `optics-
-  inverse`: new `Carrier::params_mut` accessor (chunked continuation needs
-  mutable design-space access; bounds unchanged). Host tests: 13
-  (`run_controls` + unit); `examples/demo_run.rs` smoke run. Docs:
-  `docs/ux/spec.md` §7 G-2/G-3/G-4 marked resolved for the UI path; solver
-  picker lists Adam. (GitHub #11 / GEN-54.)
-- Phase-10 task 10.2 — **PSF/metrics viewport** in the new `optics-studio`
-  crate (`crates/studio`, v0.1.0). Dioxus `=0.7.10` web target, CSR-only,
-  with the framework dependency tree gated to `wasm32` so the crate's pure
-  view model unit-tests natively (`cargo test -p optics-studio`, 55 tests)
-  and the headless crates gain no UI deps. Opt-in workspace member excluded
-  from `default-members`, so repo gates never build it; the wasm check
-  (`cargo check -p optics-studio --target wasm32-unknown-unknown`) is the
-  leak guard. View model (`src/viewmodel`): colormaps (viridis/inferno/RdBu/
-  cyclic hue wheel), intensity autoscale/lock + log floor + box-average
-  downsample to <=2048, cross-sections through the peak or cursor, metric
-  frames bound to `optics_core::analysis` (`encircled_energy`, `mtf`,
-  `strehl`, `marechal_strehl`, `spot_rms_radius`, `zernike_fit`), SVG chart
-  paths, spec 5.2 sampling-banner severities, the G-8 engine-dispatch
-  adapter, the G-6 synthetic reference-PSF recipe, and a demo bundle. Dioxus
-  viewport (`src/app`, wasm): multi-band tabs, intensity canvas painted via
-  `web-sys` `ImageData`, cursor readout, EE/MTF/Strehl/Spot/Wavefront panels,
-  and the shared radius/frequency scrubber. ADR-10.0 Q4 resolved: 2D
-  `ImageData` canvas backend (not WebGL). No physics in the UI crate — every
-  metric number comes from `optics-core` APIs. (GitHub #10 / GEN-53.)
-- Phase-10 task 10.0 — UI framework ADR **accepted**: dioxus, pinned
-  `=0.7.10`, web target (`wasm32-unknown-unknown`), CSR-only; leptos
-  0.8.22 recorded as fallback (`docs/adr-10.0-ui-framework.md`). Ratifies
-  the S1-D draft (`docs/ux/adr-10.0-draft.md`, now marked superseded)
-  after a pin-time check: standalone edition-2024 crate with
-  `dioxus = "=0.7.10", features = ["web"]` compiles clean for wasm32 on
-  rustc 1.98 (dioxus MSRV 1.83). Draft Q1–Q3 resolved (pin, `dx` tooling,
-  worker responsiveness model); Q4–Q7 deferred to tasks 10.2–10.4.
-  `tasks/plan.md` decision 4 and Phase-10 section record the decision.
-  Docs only — no UI code (10.1 adds `crates/studio`). (GitHub #8 / GEN-51.)
-- Phase-10 UI/UX spec (`docs/ux/spec.md`) and framework ADR draft
-  (`docs/ux/adr-10.0-draft.md`): personas, forward (`.zmx` → simulate →
-  PSF/metrics) and inverse (carrier → merit → solver → review) workflows,
-  10.1–10.3 screen inventory with panel→headless-API bindings verified
-  against `cargo doc` of `optics-core`/`optics-zemax`/`optics-inverse`,
-  rendering + sampling-warning constraints, and a gap register (no
-  invented APIs). ADR compares dioxus vs leptos against the workspace
-  constraints and recommends dioxus with open questions for the Phase-10
-  check-in. Docs only — no UI code. (S1-D pre-work, task GEN-42.)
 - `Material::sellmeier_book1(constant, terms)` (core): generalized Book-1
   form $n^2 = C_0 + \sum B\lambda^2/(\lambda^2 - C)$ — required by the
   H.H. Li (1980) CaF2 parameterization; `sellmeier` is the $C_0 = 1$ case.
+
 - Example `examples/inverse_drism.rs`: SAGE IV DRISM telescope — spec-to-
   geometry inverse derivation (six-band meta-filter blaze + passbands vs
   FPA format), wave-optics verification of band landing positions, and
@@ -156,6 +62,146 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   not text, not binary-ZMX blocks, no zlib streams). Supported corpus =
   text `.zmx`; export from OpticStudio (File > Save As > Text) for
   batch designs.
+
+======
+## [optics-studio 0.1.0] - 2026-10-15
+
+Phase-10 web UI — dioxus `=0.7.10`, `wasm32-unknown-unknown`, CSR-only
+(ADR-10.0); the opt-in workspace member `crates/studio` over the
+headless crates. Contents: UI/UX spec + framework ADR (10.0), the shell
+(10.1), the PSF/metrics viewport (10.2), the inverse run console
+(10.3), and the release close-out (10.4). The Phase-9 Milestone B
+entries are cut in [optics-inverse 0.2.0]; `optics-core`/`optics-zemax`
+entries stay in Unreleased for their own cuts.
+
+### Added
+
+- Phase-10 task 10.4 — **release optics-studio 0.1.0** (Phase-10
+  close-out): the checkpoint round-trip seam is wired — `ui::App`
+  provides the viewport model as shared context
+  (`Signal<Rc<StudioModel>>`, demo until the first preview); every shell
+  publish (forward or carrier) replaces it with one live frame
+  (`StudioModel::live`, metrics precomputed through
+  `viewmodel::metrics::make_frame`), so the viewport analyzes the PSF
+  just simulated; the run console captures the viewport's current frame
+  as the MSE-to-target / −Strehl merit target
+  (`RunJob::set_captured_merit`, typed grid-length validation). Live
+  forward frames attach the synthetic G-6 reference when the geometry
+  supports it (`shell::reference::forward_reference`: point source, air,
+  common engine, stop flagged, focus resolvable on the measured grid —
+  coarse preview grids stay in the no-reference state, never an
+  aliasing-noise ratio). Packaging resolved (ADR-10.0 Q5): web-only
+  static bundle via `dx build --platform web --release` plus the
+  unhashed `assets/optics-studio_bg.wasm` alias the blob worker needs
+  (`crates/studio/README.md`); desktop artifacts not shipped; Q7 session
+  format confirmed out of scope (gap G-9). Docs: `docs/architecture.md`
+  §8 crate entry added, ADR-10.0 Q5/Q7 resolved. Version already `0.1.0`
+  in `crates/studio/Cargo.toml` (`publish = false` — no registry
+  publish). Verified headless in chromium: import ACA254 → live preview
+  → viewport live-data analysis (EE/MTF/Spot) → capture 4096-sample
+  target → 600-eval worker run → Apply best → carrier preview. 9 new
+  host tests (live model, capture validation, reference builder).
+  (GitHub #12 / GEN-55.)
+
+- Phase-10 task 10.3 — **inverse run controls + convergence plot**
+  (`crates/studio`, extends the crate 10.2 created). Host-testable run core
+  (`run/`): `RunJob` — a **serializable** description of one inverse run
+  (design carrier, illumination, observation grid, built-in merit, solver,
+  budget/seed/scale, chunking) that the worker rebuilds into real
+  `optics-inverse` objects (closures cannot cross the worker boundary);
+  grid carriers are wrapped in an analytic relay so the design propagates
+  `z_after` to the detector (the grid builders' own trailing gap is 0).
+  `RunSession` — the **chunked** `solve` loop (spec §3.4, gap G-2): one
+  budget slice per call, carrying `Solution::best` into the next chunk via
+  `Params::set_values`, so Stop is "do not launch the next chunk"; chunk *k*
+  seeds `job.seed + k` (fresh stream per chunk, whole run reproducible);
+  wasm always passes `seed = Some(..)` (ADR-10.0 Q6; `getrandom/js` enabled
+  for the wasm target). `RunController` — pure Idle/Running/Stopping/
+  Finished/Failed machine + accumulated trace + Apply-best continuation +
+  reproducibility run card. Worker bridge (`bridge.rs`, wasm): solver runs
+  in a **dedicated web worker** with progress messages via `gloo-worker`
+  0.6 (ADR-10.0 Q3 — the worker-crate choice this task owned), with an
+  inline main-thread fallback transport yielding between chunks; the module
+  script path is discovered at runtime (bundler-agnostic). Run console UI
+  (`ui/`, dioxus): solver picker (random walk / annealing / Adam),
+  budget/seed/scale/random-init, Start/Stop, log-y SVG convergence plot
+  (`Solution::history`), progress readout, Apply-best, observation config
+  (bands/scenes/derivative channels/ASM) and built-in merit editor; MSE-to-
+  target and Strehl merit *frames* deferred to the viewport (10.2 capture).
+  `ui::App` now composes the 10.2 viewport above the console. `optics-
+  inverse`: new `Carrier::params_mut` accessor (chunked continuation needs
+  mutable design-space access; bounds unchanged). Host tests: 13
+  (`run_controls` + unit); `examples/demo_run.rs` smoke run. Docs:
+  `docs/ux/spec.md` §7 G-2/G-3/G-4 marked resolved for the UI path; solver
+  picker lists Adam. (GitHub #11 / GEN-54.)
+
+- Phase-10 task 10.2 — **PSF/metrics viewport** in the new `optics-studio`
+  crate (`crates/studio`, v0.1.0). Dioxus `=0.7.10` web target, CSR-only,
+  with the framework dependency tree gated to `wasm32` so the crate's pure
+  view model unit-tests natively (`cargo test -p optics-studio`, 55 tests)
+  and the headless crates gain no UI deps. Opt-in workspace member excluded
+  from `default-members`, so repo gates never build it; the wasm check
+  (`cargo check -p optics-studio --target wasm32-unknown-unknown`) is the
+  leak guard. View model (`src/viewmodel`): colormaps (viridis/inferno/RdBu/
+  cyclic hue wheel), intensity autoscale/lock + log floor + box-average
+  downsample to <=2048, cross-sections through the peak or cursor, metric
+  frames bound to `optics_core::analysis` (`encircled_energy`, `mtf`,
+  `strehl`, `marechal_strehl`, `spot_rms_radius`, `zernike_fit`), SVG chart
+  paths, spec 5.2 sampling-banner severities, the G-8 engine-dispatch
+  adapter, the G-6 synthetic reference-PSF recipe, and a demo bundle. Dioxus
+  viewport (`src/app`, wasm): multi-band tabs, intensity canvas painted via
+  `web-sys` `ImageData`, cursor readout, EE/MTF/Strehl/Spot/Wavefront panels,
+  and the shared radius/frequency scrubber. ADR-10.0 Q4 resolved: 2D
+  `ImageData` canvas backend (not WebGL). No physics in the UI crate — every
+  metric number comes from `optics-core` APIs. (GitHub #10 / GEN-53.)
+
+- Phase-10 task 10.1 — **UI shell: prescription editor + live Beamline
+  preview** (`crates/studio::shell`, mounted by `ui::App` in the spec §3
+  three-region layout): file panel (`.zmx` import + AGF catalog load +
+  bundled ACA254 sample + in-session recents), authoritative text mode
+  with ~250 ms debounced `ImportedSystem::parse_with` validation and
+  typed-error display, table mode with per-surface sliders + numeric
+  edits rebuilding the simulation beamline via the optics-zemax builder
+  mapping (bit-for-bit PSF parity test), paraxial EFL/BFL card with
+  file image-distance cross-check, WAVM/PWAV wavelength selector,
+  source picker (point / tilted plane wave / Gaussian + grid spec),
+  five-way engine picker (ASM / Fresnel transfer / convolution /
+  Fraunhofer / Rayleigh-Sommerfeld) with the G-8 error-unifying dispatch
+  adapter, regime auto-suggest, and §5.2 sampling banner through the
+  shared `viewmodel::banner`; Beamline schematic strip (SVG); carrier
+  sliders (demo singlet, `Carrier::params → build → Design::beamline →
+  psf`, 100 ms-throttled commits); stale-frame + typed-error toast
+  policy. Live preview pixels reuse `viewmodel::intensity` (no second
+  colormap pipeline). Fixes a latent boot bug in task-10.3 `bridge.rs`:
+  its `#[wasm_bindgen(start)]` made the dioxus loader skip `main()`, so
+  the app never mounted in a browser — the single start hook now
+  dispatches by scope (page → `ui::launch`, worker → handler register).
+  Deps added to the crate: `optics-zemax`, `base64`,
+  `wasm-bindgen-futures`, `gloo-timers/futures`. 16 native shell tests
+  (`cargo test -p optics-studio`); wasm leak guard re-passed; verified
+  end-to-end in headless chromium (import → edit → live preview →
+  carrier sliders → 10.3 worker run). (GitHub #9 / GEN-52.)
+
+- Phase-10 task 10.0 — UI framework ADR **accepted**: dioxus, pinned
+  `=0.7.10`, web target (`wasm32-unknown-unknown`), CSR-only; leptos
+  0.8.22 recorded as fallback (`docs/adr-10.0-ui-framework.md`). Ratifies
+  the S1-D draft (`docs/ux/adr-10.0-draft.md`, now marked superseded)
+  after a pin-time check: standalone edition-2024 crate with
+  `dioxus = "=0.7.10", features = ["web"]` compiles clean for wasm32 on
+  rustc 1.98 (dioxus MSRV 1.83). Draft Q1–Q3 resolved (pin, `dx` tooling,
+  worker responsiveness model); Q4–Q7 deferred to tasks 10.2–10.4.
+  `tasks/plan.md` decision 4 and Phase-10 section record the decision.
+  Docs only — no UI code (10.1 adds `crates/studio`). (GitHub #8 / GEN-51.)
+
+- Phase-10 UI/UX spec (`docs/ux/spec.md`) and framework ADR draft
+  (`docs/ux/adr-10.0-draft.md`): personas, forward (`.zmx` → simulate →
+  PSF/metrics) and inverse (carrier → merit → solver → review) workflows,
+  10.1–10.3 screen inventory with panel→headless-API bindings verified
+  against `cargo doc` of `optics-core`/`optics-zemax`/`optics-inverse`,
+  rendering + sampling-warning constraints, and a gap register (no
+  invented APIs). ADR compares dioxus vs leptos against the workspace
+  constraints and recommends dioxus with open questions for the Phase-10
+  check-in. Docs only — no UI code. (S1-D pre-work, task GEN-42.)
 
 ## [optics-inverse 0.2.0] - 2026-10-15
 

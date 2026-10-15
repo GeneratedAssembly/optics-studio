@@ -18,17 +18,21 @@ const DISPLAY_PX: u32 = 440;
 /// Left column of the viewport.
 #[component]
 pub fn IntensityColumn(mut view: Signal<ViewportState>) -> Element {
-    let model = use_context::<Rc<StudioModel>>();
+    let model_ctx = use_context::<Signal<Rc<StudioModel>>>();
+    let model = model_ctx.read();
     let v = view.read().clone();
     let frame = model.active(v.active_frame);
     let (nx, ny) = frame.psf.dims();
 
     // Paint the canvas after every state change (spec §3.5: keep the last
-    // good image; paint failure degrades to numbers-only).
-    let paint_model = Rc::clone(&model);
+    // good image; paint failure degrades to numbers-only). Reading the
+    // model inside the effect re-paints when the shell publishes a new
+    // live frame (task-10.4 round-trip seam).
+    let paint_model = model_ctx;
     use_effect(move || {
         let v = view.read().clone();
-        let frame = paint_model.active(v.active_frame);
+        let m = paint_model.read();
+        let frame = m.active(v.active_frame);
         let opts = RenderOptions {
             colormap: v.colormap,
             log: v.log,
@@ -82,7 +86,8 @@ pub fn IntensityColumn(mut view: Signal<ViewportState>) -> Element {
 /// Colormap / log / scale-lock controls.
 #[component]
 pub fn ControlsRow(mut view: Signal<ViewportState>) -> Element {
-    let model = use_context::<Rc<StudioModel>>();
+    let model_ctx = use_context::<Signal<Rc<StudioModel>>>();
+    let model = model_ctx.read();
     let v = view.read().clone();
     let frame = model.active(v.active_frame);
     let (nx, ny) = frame.psf.dims();
@@ -133,7 +138,8 @@ pub fn ControlsRow(mut view: Signal<ViewportState>) -> Element {
 /// (spec §3.3 "Interaction").
 #[component]
 pub fn CursorReadout(view: Signal<ViewportState>) -> Element {
-    let model = use_context::<Rc<StudioModel>>();
+    let model_ctx = use_context::<Signal<Rc<StudioModel>>>();
+    let model = model_ctx.read();
     let v = view.read();
     let Some((ix, iy)) = v.cursor else {
         return rsx! {

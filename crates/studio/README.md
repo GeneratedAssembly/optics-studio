@@ -18,10 +18,20 @@ Phase-10 web UI over the headless optics APIs — dioxus `=0.7.10`,
   `optics-zemax` builder + schematic strip model), `source` (source
   picker), `dispatch` (five-way engine picker incl. Rayleigh-Sommerfeld,
   G-8 adapter), `preview` (live-preview raster via `viewmodel::intensity`
-  + BMP encode), `carrier` (demo inverse carrier); `shell/ui/` holds the
-  dioxus editor column, live preview, and pickers (wasm only).
+  + BMP encode), `reference` (live synthetic G-6 reference PSF for the
+  viewport Strehl panel), `carrier` (demo inverse carrier); `shell/ui/`
+  holds the dioxus editor column, live preview, and pickers (wasm only).
 - `ui/` — the app root (`ui::App`): shell column + live preview left/
   center, setup panels right, 10.2 viewport, 10.3 run console.
+
+Round-trip seam (task 10.4): `ui::App` provides the viewport model as
+shared context (`Signal<Rc<StudioModel>>`, demo until the first preview).
+Every shell publish — forward simulation or carrier — replaces it with a
+live frame (`StudioModel::live`, metrics precomputed through
+`viewmodel::metrics::make_frame`), so the viewport analyzes the PSF you
+just simulated; the run console captures that frame as the
+MSE-to-target / −Strehl merit target (`RunJob::set_captured_merit`).
+Import → simulate → analyze → inverse-design closes in the UI.
 
 No physics in this crate (spec §6): only public-API calls from
 `optics-core` / `optics-zemax` / `optics-inverse`, unit conversion, and
@@ -60,8 +70,19 @@ cargo check -p optics-studio --target wasm32-unknown-unknown
 cargo clippy -p optics-studio --target wasm32-unknown-unknown --all-targets -- -D warnings
 ```
 
-Bundle for packaging (task 10.4): `dx build --platform web` →
-`target/dx/optics-studio/*/web/public/`.
+Bundle for packaging (task 10.4 — release 0.1.0, web-only per
+[ADR-10.0 Q5](../../docs/adr-10.0-ui-framework.md)):
+
+```sh
+dx build --platform web --release
+cd target/dx/optics-studio/release/web/public
+# dioxus 0.7.9 blob-worker split-linking fetches the unhashed wasm name:
+cp assets/optics-studio_bg-<hash>.wasm assets/optics-studio_bg.wasm
+```
+
+Serve `public/` from any static host. Without the `cp` the solver worker
+hangs on its wasm fetch (the hashed URL resolves to `/./assets/...`
+inside the blob worker, which `fetch` rejects).
 
 ## Browser constraints
 

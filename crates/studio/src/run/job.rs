@@ -286,6 +286,16 @@ impl MeritSpec {
     }
 }
 
+/// Which reference merit a captured viewport frame should become
+/// ([`RunJob::set_captured_merit`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureKind {
+    /// MSE of the selected intensity frame against the capture.
+    MseToTarget,
+    /// Negative Strehl ratio against the capture.
+    Strehl,
+}
+
 /// Solver selection, mirroring [`Solver`].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum SolverSpec {
@@ -666,6 +676,46 @@ impl RunJob {
             | MeritSpec::Strehl { selector: s, .. }
             | MeritSpec::Mtf { selector: s, .. } => *s = selector,
         }
+    }
+
+    /// Capture the current viewport frame as a reference merit's target —
+    /// the task-10.4 round-trip seam (analyze → inverse-design against the
+    /// analyzed PSF).
+    ///
+    /// `samples` must be one intensity frame on the job's observation grid
+    /// (`nx * ny` samples, row-major); mismatches return a typed error the
+    /// console displays. The selector's channel is forced to `Intensity`
+    /// because the viewport frame is an intensity grid.
+    pub fn set_captured_merit(
+        &mut self,
+        kind: CaptureKind,
+        samples: Vec<f64>,
+    ) -> Result<(), String> {
+        let expected = self.grid.nx * self.grid.ny;
+        if samples.len() != expected {
+            return Err(format!(
+                "captured frame has {} samples, observation grid expects {expected} ({}x{})",
+                samples.len(),
+                self.grid.nx,
+                self.grid.ny
+            ));
+        }
+        if samples.iter().any(|v| !v.is_finite()) {
+            return Err("captured frame has non-finite samples".into());
+        }
+        let mut selector = self.merit_selector();
+        selector.channel = ChannelSpec::Intensity;
+        self.merit = match kind {
+            CaptureKind::MseToTarget => MeritSpec::MseToTarget {
+                target: samples,
+                selector,
+            },
+            CaptureKind::Strehl => MeritSpec::Strehl {
+                reference: samples,
+                selector,
+            },
+        };
+        Ok(())
     }
 
     /// Build the carrier: the grid relay wrapped in an analytic carrier so

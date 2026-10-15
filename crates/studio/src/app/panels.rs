@@ -72,7 +72,8 @@ pub fn Scrubber(mut view: Signal<ViewportState>) -> Element {
 
 #[component]
 pub fn EePanel(mut view: Signal<ViewportState>) -> Element {
-    let model = use_context::<Rc<StudioModel>>();
+    let model_ctx = use_context::<Signal<Rc<StudioModel>>>();
+    let model = model_ctx.read();
     let v = view.read().clone();
     let frame = model.active(v.active_frame);
     let (radii, fractions) = frame.metrics.ee.curve();
@@ -95,7 +96,8 @@ pub fn EePanel(mut view: Signal<ViewportState>) -> Element {
 
 #[component]
 pub fn MtfPanel(mut view: Signal<ViewportState>) -> Element {
-    let model = use_context::<Rc<StudioModel>>();
+    let model_ctx = use_context::<Signal<Rc<StudioModel>>>();
+    let model = model_ctx.read();
     let v = view.read().clone();
     let frame = model.active(v.active_frame);
     let chart = Chart::mtf(
@@ -130,7 +132,8 @@ pub fn MtfPanel(mut view: Signal<ViewportState>) -> Element {
 
 #[component]
 pub fn StrehlPanel(view: Signal<ViewportState>) -> Element {
-    let model = use_context::<Rc<StudioModel>>();
+    let model_ctx = use_context::<Signal<Rc<StudioModel>>>();
+    let model = model_ctx.read();
     let v = view.read().clone();
     let frame = model.active(v.active_frame);
     match frame.metrics.strehl {
@@ -152,7 +155,9 @@ pub fn StrehlPanel(view: Signal<ViewportState>) -> Element {
             div {
                 PanelTitle { title: "Strehl ratio".to_string() }
                 div { style: "font-size:13px; color:#888;",
-                    "This frame is the reference itself — pick a measured band tab to see the ratio."
+                    "No reference PSF on this frame — pick a band tab that carries \
+                     the synthetic reference (demo measured bands; live forward \
+                     frames with point-source geometry)."
                 }
             }
         },
@@ -161,7 +166,8 @@ pub fn StrehlPanel(view: Signal<ViewportState>) -> Element {
 
 #[component]
 pub fn SpotPanel(view: Signal<ViewportState>) -> Element {
-    let model = use_context::<Rc<StudioModel>>();
+    let model_ctx = use_context::<Signal<Rc<StudioModel>>>();
+    let model = model_ctx.read();
     let v = view.read().clone();
     let frame = model.active(v.active_frame);
     let (cx, cy) = frame.metrics.centroid;
@@ -182,7 +188,8 @@ pub fn SpotPanel(view: Signal<ViewportState>) -> Element {
 
 #[component]
 pub fn WavefrontPanel(view: Signal<ViewportState>) -> Element {
-    let model = use_context::<Rc<StudioModel>>();
+    let model_ctx = use_context::<Signal<Rc<StudioModel>>>();
+    let model = model_ctx.read();
     let v = view.read().clone();
     let frame = model.active(v.active_frame);
     let Some(wf) = &frame.metrics.wavefront else {

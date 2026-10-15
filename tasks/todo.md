@@ -292,10 +292,32 @@ Web from the start (resolved decision 4).
   the console. ADR leak guard re-run: `cargo check -p optics-studio --target
   wasm32-unknown-unknown` clean. 13 host tests + `examples/demo_run.rs`.
   Spec §7 G-2/G-3/G-4 marked resolved for the UI path. (GitHub #11 / GEN-54.)
-- [ ] **10.4 Release 0.1.0** (`optics-studio`).
+- [x] **10.4 Release 0.1.0** (`optics-studio`).
+  -> **delivered**: round-trip seam wired — `ui::App` provides the
+  viewport model as shared context; every shell publish (forward or
+  carrier) replaces it with a live frame (`StudioModel::live`, metrics
+  through `make_frame`), and the run console captures that frame as the
+  MSE-to-target / −Strehl merit target (`RunJob::set_captured_merit`,
+  typed grid-length validation). Live forward frames attach the synthetic
+  G-6 reference only when resolvable on the measured grid
+  (`shell::reference::forward_reference`); coarse preview grids stay in
+  the honest no-reference state. ADR-10.0 Q5 resolved (web-only static
+  bundle + unhashed wasm alias for the blob worker; desktop not shipped)
+  and Q7 confirmed out of scope (G-9). Docs: `docs/architecture.md` §8,
+  README packaging + seam, CHANGELOG cut. Version `0.1.0` already in
+  `crates/studio/Cargo.toml` (`publish = false` — no registry publish).
+  9 new host tests; all gates green (workspace fmt/clippy/doc/test +
+  native `cargo test -p optics-studio` + wasm check/clippy); verified
+  headless in chromium: import → live preview → viewport live-data
+  analysis → capture → 600-eval worker run → Apply best → carrier
+  preview. (GitHub #12 / GEN-55.)
 
 ### Checkpoint: Suite complete
-- [ ] Import → simulate → analyze → inverse-design round trip in the UI
+- [x] Import → simulate → analyze → inverse-design round trip in the UI
+  (verified 2026-10-15 in task 10.4, headless chromium against the
+  release bundle: ACA254 import → live preview → viewport "live data"
+  EE/MTF/Spot on the simulated PSF → 4096-sample capture as MSE target →
+  worker run 600 evals / 10 chunks → Apply best → carrier live preview)
 - [ ] Final review
 
 ## Verification commands (all phases)
