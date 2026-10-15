@@ -14,7 +14,11 @@
 fn main() {
     #[cfg(target_arch = "wasm32")]
     {
-        dioxus::launch(optics_studio::ui::App);
+        // On wasm the module `start` hook (`bridge::worker_bootstrap`) owns
+        // bootstrap: it launches the app in a page scope and registers the
+        // solver worker in a worker scope. The loader skips `main()` when a
+        // `start` export exists, so this branch is a safety net only.
+        optics_studio::ui::launch();
     }
     #[cfg(not(target_arch = "wasm32"))]
     {

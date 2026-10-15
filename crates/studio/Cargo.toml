@@ -8,9 +8,13 @@ publish = false
 
 [dependencies]
 optics-core = { path = "../.." }
+optics-zemax = { path = "../optics-zemax" }
 optics-inverse = { path = "../optics-inverse" }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
+# Task 10.1 shell: BMP encode for the live-preview <img> (display plumbing;
+# pixel mapping is delegated to viewmodel::intensity).
+base64 = "0.22"
 
 # ADR-10.0: the framework tree lives entirely in this crate and only for the
 # wasm target, so native `cargo test -p optics-studio` builds and runs the
@@ -19,10 +23,13 @@ serde = { version = "1", features = ["derive"] }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 dioxus = { version = "=0.7.10", features = ["web"] }
 wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
 # Solver runs execute in a dedicated web worker with progress messages
 # (ADR-10.0 Q3; worker crate choice was the task 10.3 decision — gloo-worker).
 gloo-worker = "0.6"
-gloo-timers = "0.3"
+# `futures` powers the shell's debounced parse / throttled slider commits
+# (spec §3.2) via `TimeoutFuture`.
+gloo-timers = { version = "0.3", features = ["futures"] }
 js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "Document",

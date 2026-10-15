@@ -250,8 +250,17 @@ Web from the start (resolved decision 4).
   (`docs/adr-10.0-ui-framework.md`); pin-time wasm32 + edition-2024 check
   passed on rustc 1.98; leptos 0.8.22 recorded as fallback; draft Q1–Q3
   resolved, Q4–Q7 deferred to 10.2–10.4. Plan decision 4 updated.
-- [ ] **10.1 Shell** — prescription view/editor (import via optics-zemax),
-  parameter sliders → live Beamline preview.
+- [x] **10.1 Shell** — prescription view/editor (import via optics-zemax),
+  parameter sliders → live Beamline preview. → `crates/studio::shell`:
+  file panel (`.zmx`/AGF import, bundled ACA254 sample), debounced text
+  mode with typed parse errors, table mode with per-surface sliders
+  rebuilding the simulation beamline (mirrors the optics-zemax builder;
+  PSF parity test), paraxial card + image-distance cross-check, WAVM/PWAV
+  selector, source picker, five-way engine picker (G-8 adapter, RS
+  included), Beamline schematic strip, carrier sliders → live preview,
+  §5.2 banner via the shared `viewmodel::banner`, typed-error toasts.
+  Mounted by `ui::App` (three-region layout); fixes the latent
+  `#[wasm_bindgen(start)]` page-boot conflict in `bridge.rs`.
 - [x] **10.2 PSF/metrics viewport** — intensity render + EE/MTF/Strehl panel
   (analysis crate APIs only). -> **delivered**: `crates/studio`
   (`optics-studio` 0.1.0, dioxus `=0.7.10` web, wasm-gated deps; opt-in

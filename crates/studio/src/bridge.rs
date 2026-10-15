@@ -101,11 +101,16 @@ impl Worker for SolverWorker {
     }
 }
 
-/// Runs on every module init (page and worker); registers the worker
-/// handler only inside a worker scope (no `document` on the global).
+/// Runs on every module init (page and worker). The crate's single
+/// `#[wasm_bindgen(start)]`: a `start` export makes the loader skip
+/// `main()`, so this hook owns both boot paths — page scope launches the
+/// dioxus app ([`crate::ui::launch`]); worker scope registers the solver
+/// handler (no `document` on the global).
 #[wasm_bindgen(start)]
 pub fn worker_bootstrap() {
-    if !in_page_context() {
+    if in_page_context() {
+        crate::ui::launch();
+    } else {
         SolverWorker::registrar().register();
     }
 }

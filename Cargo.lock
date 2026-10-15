@@ -2062,6 +2062,7 @@ dependencies = [
 name = "optics-studio"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bincode",
  "dioxus",
  "getrandom 0.2.17",
@@ -2070,10 +2071,12 @@ dependencies = [
  "js-sys",
  "optics-core",
  "optics-inverse",
+ "optics-zemax",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 

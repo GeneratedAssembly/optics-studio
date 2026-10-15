@@ -9,6 +9,32 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- Phase-10 task 10.1 — **UI shell: prescription editor + live Beamline
+  preview** (`crates/studio::shell`, mounted by `ui::App` in the spec §3
+  three-region layout): file panel (`.zmx` import + AGF catalog load +
+  bundled ACA254 sample + in-session recents), authoritative text mode
+  with ~250 ms debounced `ImportedSystem::parse_with` validation and
+  typed-error display, table mode with per-surface sliders + numeric
+  edits rebuilding the simulation beamline via the optics-zemax builder
+  mapping (bit-for-bit PSF parity test), paraxial EFL/BFL card with
+  file image-distance cross-check, WAVM/PWAV wavelength selector,
+  source picker (point / tilted plane wave / Gaussian + grid spec),
+  five-way engine picker (ASM / Fresnel transfer / convolution /
+  Fraunhofer / Rayleigh-Sommerfeld) with the G-8 error-unifying dispatch
+  adapter, regime auto-suggest, and §5.2 sampling banner through the
+  shared `viewmodel::banner`; Beamline schematic strip (SVG); carrier
+  sliders (demo singlet, `Carrier::params → build → Design::beamline →
+  psf`, 100 ms-throttled commits); stale-frame + typed-error toast
+  policy. Live preview pixels reuse `viewmodel::intensity` (no second
+  colormap pipeline). Fixes a latent boot bug in task-10.3 `bridge.rs`:
+  its `#[wasm_bindgen(start)]` made the dioxus loader skip `main()`, so
+  the app never mounted in a browser — the single start hook now
+  dispatches by scope (page → `ui::launch`, worker → handler register).
+  Deps added to the crate: `optics-zemax`, `base64`,
+  `wasm-bindgen-futures`, `gloo-timers/futures`. 16 native shell tests
+  (`cargo test -p optics-studio`); wasm leak guard re-passed; verified
+  end-to-end in headless chromium (import → edit → live preview →
+  carrier sliders → 10.3 worker run). (GitHub #9 / GEN-52.)
 - Phase-9 task 9.12 — **custom-merit implementation + CRLB worked
   example** (implements ADR-9.11 §8): feature `py` (`optics-inverse`
   only; default features unchanged, CI stays Python-free) adds `PyMerit`,

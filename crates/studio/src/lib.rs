@@ -25,6 +25,13 @@
 //!   solvers.
 //! - [`bridge`] — wasm only: the dedicated-web-worker transport (ADR-10.0
 //!   Q3) with a synchronous inline fallback, via `gloo-worker`.
+//! - [`shell`] — the task-10.1 application shell: prescription view/editor
+//!   (`.zmx` import + text/table modes + parameter sliders), the source /
+//!   engine picker models, the G-8 five-way dispatch adapter (the shell
+//!   picker includes Rayleigh-Sommerfeld, outside the core `Engine` enum),
+//!   the Beamline schematic strip model, and the demo carrier; its dioxus
+//!   components live in [`shell::ui`] (wasm only) and are mounted by
+//!   [`ui::App`].
 //! - [`ui`] — wasm only: dioxus components (run console + convergence plot).
 //!
 //! Constraints (docs/ux/spec.md §6): **no physics in this crate** — only
@@ -35,6 +42,7 @@
 //! cannot cross the worker boundary as closures).
 
 pub mod run;
+pub mod shell;
 pub mod viewmodel;
 
 #[cfg(target_arch = "wasm32")]

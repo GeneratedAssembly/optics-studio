@@ -1,9 +1,15 @@
-//! Application root. Composes the task-10.2 PSF/metrics viewport
-//! ([`crate::app::Studio`]) with the task-10.3 inverse run console
-//! ([`RunConsole`]). Task 10.1 (the shell) will add the prescription /
-//! slider column and wire the applied best into the live preview.
+//! Application root. Composes the task-10.1 shell (prescription /
+//! slider column + live preview, [`crate::shell::ui`]) with the
+//! task-10.2 PSF/metrics viewport ([`crate::app::Studio`]) and the
+//! task-10.3 inverse run console ([`RunConsole`]) in the spec §3
+//! three-region layout: editor column left, viewport center, setup
+//! column right, run console bottom.
 
 use dioxus::prelude::*;
+
+use crate::shell::ui::studio::Shell;
+use crate::shell::ui::style as shell_style;
+use crate::shell::ui::{ShellColumn, ShellPreview, ShellSetup, ShellToasts};
 
 use super::run_console::RunConsole;
 
@@ -37,13 +43,22 @@ button:disabled { opacity: 0.45; cursor: default; }
 details pre { background: #0c0f15; padding: 0.6rem; border-radius: 6px; font-size: 11px; overflow-x: auto; }
 "#;
 
-/// The optics-studio app root: viewport + run console.
+/// The optics-studio app root: shell + viewport + run console.
 #[component]
 pub fn App() -> Element {
+    let _shell = use_context_provider(Shell::new);
     rsx! {
         style { "{CSS}" }
+        style { {shell_style::CSS} }
         div { class: "app",
-            crate::app::Studio {}
+            div { class: "studio-grid",
+                aside { class: "grid-left", ShellColumn {} }
+                main { class: "grid-center",
+                    ShellPreview {}
+                    crate::app::Studio {}
+                }
+                aside { class: "grid-right", ShellSetup {} }
+            }
             h2 { "Inverse run controls" }
             p { class: "subtitle",
                 "task 10.3 — start/stop solvers, convergence plot. Solver runs \
@@ -52,5 +67,6 @@ pub fn App() -> Element {
             }
             RunConsole {}
         }
+        ShellToasts {}
     }
 }
