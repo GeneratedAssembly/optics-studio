@@ -73,4 +73,13 @@ pub enum InverseError {
         /// Summary of the worst mismatch (index, values, tolerance).
         reason: String,
     },
+    /// The deep-surrogate harness (feature `dl`, task 9.14) could not run:
+    /// dataset shape mismatch, degenerate normalization bounds, artifact
+    /// I/O failure, or a tensor conversion error. `reason` carries the
+    /// diagnostic.
+    #[error("dl harness failed: {reason}")]
+    Dl {
+        /// Human-readable cause from the harness layer.
+        reason: String,
+    },
 }

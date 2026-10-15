@@ -24,8 +24,11 @@
 //!   [`gradcheck::FdObsMerit`] adjoint fallback. Estimation-theoretic
 //!   merits such as Cramer–Rao trace minimization are *user* merits, not
 //!   built-ins — see `examples/crlb_doe.rs` for the worked example.
-//! - **0.3.0 (deep surrogates)** — dataset generation and network
-//!   surrogates on `burn` (feature-gated; GPU never in core).
+//! - **0.3.0 (deep surrogates)** — `dl` (feature `dl`): headless
+//!   dataset generation from the renderer plus `burn` MLP surrogates in
+//!   both directions — a forward stand-in for the renderer and an
+//!   inverse warm start (`dl::warm_start`) for the solvers. Flex CPU
+//!   backend by default; GPU is allowed here, never in core.
 //!
 //! ## Layout conventions
 //!
@@ -45,6 +48,9 @@ pub mod merit;
 pub mod observe;
 pub mod params;
 pub mod solve;
+
+#[cfg(feature = "dl")]
+pub mod dl;
 
 #[cfg(feature = "py")]
 pub mod py;

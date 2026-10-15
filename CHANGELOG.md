@@ -9,6 +9,26 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **optics-inverse `dl`** (task 9.14, Milestone C opener): the `burn`
+  deep-surrogate harness behind new feature `dl` (burn 0.22 with the
+  pure-Rust Flex CPU backend; GPU allowed here, never in core).
+  `dl::dataset::generate` renders the carrier's bound box headlessly
+  (uniform draws → `Renderer` → per-scene band-summed, block-averaged
+  intensity features) and persists datasets as bit-exact JSON
+  (`serde_json` `float_roundtrip`); `dl::surrogate::train` fits MLPs in
+  both directions — `Direction::Forward` (params → features, renderer
+  stand-in) and `Direction::Inverse` (features → params, solver warm
+  start) — with mini-batch Adam and best-validation-epoch snapshots,
+  per-axis min–max on parameters and one shared min–max on features;
+  `dl::warm_start` clamps predictions into the carrier bounds.
+  Surrogates save/load as burnpack + meta JSON. Docs: `docs/physics.md`
+  §15 (identifiability: the f ↔ 2z−f intensity mirror bounds the worked
+  example's focal box), `docs/architecture.md` §7. Tests
+  `tests/dl_surrogate.rs` (deterministic dataset, forward/inverse
+  learning bounds, burnpack roundtrip); example
+  `examples/surrogate_doe.rs` (surrogate warm start feeding Adam on a
+  real ASM merit). (GitHub #6 / GEN-49.)
+
 - `Material::sellmeier_book1(constant, terms)` (core): generalized Book-1
   form $n^2 = C_0 + \sum B\lambda^2/(\lambda^2 - C)$ — required by the
   H.H. Li (1980) CaF2 parameterization; `sellmeier` is the $C_0 = 1$ case.

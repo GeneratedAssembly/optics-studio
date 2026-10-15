@@ -471,7 +471,8 @@ never appears in the public surface.
 | `adjoint` | Reverse-mode grid gradients (physics §13, ADR-9.9): adjoints of the forward primitives in reverse order — no autodiff graph | `asm_adjoint`, `transmission`, `push_back`, `grid_gradient`, `PlaneGradient` |
 | `gradcheck` | FD-on-observation machinery: central differences on the data vector, the ADR-9.11 check helper (`assert_close`), and the `FdObsMerit` wrapper that makes an opaque merit adjoint-consumable at window scale | `fd_obs_gradient`, `check`, `assert_close`, `window_indices`, `GradCheckConfig`, `GradientCheck`, `FdObsMerit` |
 | `py` (feature) | Custom-merit Python frontend (ADR-9.11, physics §14): embedded interpreter via pyo3 `auto-initialize`; `PyMerit` implements `Merit`, presenting the observation as a read-only `(C,B,S,Ny,Nx)` float64 ndarray + metadata dict, with an optional user `merit_grad` callable; Python exceptions wrap as `InverseError::Python` | `PyMerit`, `channel_name` |
-| `error` | Crate-wide typed errors via thiserror — validation surfaces at apply time, never a panic | `InverseError` (`Python` and `GradCheck` variants added in 0.2.0) |
+| `dl` (feature) | Deep-surrogate harness (task 9.14, physics §15): headless dataset generation (uniform box draws → renders → block-averaged intensity features), min–max normalization, burn MLP training in both directions (forward surrogate, inverse warm start) with mini-batch Adam and best-epoch snapshots; datasets persist as JSON, surrogates as burnpack + meta. Flex CPU by default, GPU via `train_on` — allowed here, never in core | `generate`, `Dataset`, `Sample`, `FeatureSpec`, `Norm`, `Surrogate`, `Direction`, `TrainConfig`, `TrainReport`, `train`, `train_on`, `warm_start` |
+| `error` | Crate-wide typed errors via thiserror — validation surfaces at apply time, never a panic | `InverseError` (`Python` and `GradCheck` variants added in 0.2.0, `Dl` in 0.3.0) |
 
 **Data flow (solver loop):** `Params` vector → `Carrier::build(values, λ)`
 → `Design` → `Renderer` (core ASM) → `Observation` → `Merit::evaluate` →
@@ -485,14 +486,19 @@ parameter vector — the same lattice the solver paths optimize.
 point for the custom-merit frontend — `PyMerit` (feature `py`,
 ADR-9.11) implements it against the numpy-ready `Observation` layout, so
 no solver code changed for Milestone B; the same flat layout is the
-dataset interface for `burn` surrogates (Milestone C, feature-gated).
+dataset interface for `burn` surrogates (Milestone C, feature `dl`):
+`dl::dataset::generate` renders the carrier box headlessly and `dl::
+surrogate::train` learns both directions of the design↔observation map,
+feeding solver warm starts through `dl::warm_start`.
 The frontend's GIL discipline: every merit call takes the GIL for its
 duration, so merit evaluations serialize — harmless while solvers are
 single-threaded, and a constraint any future parallel-render path must
 respect (ADR-9.11 §8). Examples:
 `crates/optics-inverse/examples/coded_doe.rs` (GS top-hat beam shaper),
 `crates/optics-inverse/examples/crlb_doe.rs` (CRLB user merit optimized
-via the adjoint, `--features py`).
+via the adjoint, `--features py`),
+`crates/optics-inverse/examples/surrogate_doe.rs` (dataset → forward +
+inverse surrogates → warm-started Adam, `--features dl`).
 
 ## 8. Workspace crate: `optics-studio` (Phase 10 — 0.1.0 released)
 

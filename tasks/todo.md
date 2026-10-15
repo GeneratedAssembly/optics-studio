@@ -228,9 +228,20 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
 
 ### Milestone C — deep surrogates (optics-inverse 0.3.0, feature `dl`)
 
-- [ ] **9.14 burn harness** — headless dataset generation (params →
+- [x] **9.14 burn harness** — headless dataset generation (params →
   observations), surrogate forward + inverse network training; GPU allowed
-  here, never in core. Scope: L. Deps: 9.13.
+  here, never in core. Scope: L. Deps: 9.13. → **delivered**: feature
+  `dl` (burn 0.22, Flex CPU default; `train_on` takes any burn device so
+  GPU stays opt-in and out of core), `dl::dataset::generate` (uniform box
+  draws → `Renderer` → per-scene band-summed block-averaged features;
+  bit-exact JSON persistence), `dl::surrogate::train` (MLP, mini-batch
+  Adam, best-epoch snapshot; per-axis min–max on params, shared min–max
+  on features; forward + inverse `Direction`), `dl::warm_start` (clamped
+  solver initial point), burnpack+meta artifact roundtrip.
+  `docs/physics.md` §15 (incl. the f ↔ 2z−f intensity-mirror
+  identifiability bound), `docs/architecture.md` §7,
+  `tests/dl_surrogate.rs`, `examples/surrogate_doe.rs`. (GitHub #6 /
+  GEN-49.)
 - [ ] **9.15 Release 0.3.0** + docs. Scope: S.
 
 ### Checkpoint: Inverse works (end of Phase 9)

@@ -905,6 +905,54 @@ map exported from the notebook model
 $\sim 3\cdot10^{-12}$ of peak — two independent implementations (torch
 FFT vs rustfft) of the same ASM spec.
 
+## 15. Deep surrogates — the burn harness (`optics-inverse`, task 9.14, feature `dl`)
+
+Milestone C (plan decision 3) turns the headless forward model into a data
+factory and learns both directions of the design↔observation map with
+small MLPs. No new physics is introduced: the surrogate imitates the §4
+ASM render chain, and its acceptance is measured against fresh renders.
+
+- **Dataset.** `dl::dataset::generate` draws parameter vectors uniformly
+  from the carrier's declared bound box (the same box the §12–13 solvers
+  search), renders each through the borrowed `Renderer`, and reduces the
+  `Observation` to a fixed-length feature vector: per scene, the intensity
+  channel summed incoherently over bands (§2 convention) and block-averaged
+  by `downsample`. Block averaging keeps the features below the Nyquist
+  limit of the *design* sweep — a focused spot of $w \approx \lambda z /
+  \pi w_0$ (here 25–45 µm on a 10 µm grid) would otherwise alias into
+  patterns no network can interpolate. Datasets persist as JSON with
+  bit-exact floats (`serde_json`'s `float_roundtrip`); the render sweep is
+  the expensive step and runs once.
+- **Normalization.** Parameters use per-axis min–max; features use one
+  *shared* min–max. Per-axis feature scaling would amplify the
+  $10^{-25}$-level background to full scale and hand the network noise to
+  fit; shared scaling keeps the background near zero and puts the loss
+  where the light is.
+- **Surrogates.** `dl::surrogate::train` fits an MLP (linear layers with
+  `Relu` between, linear output) on mini-batch MSE with Adam and a
+  best-validation-epoch snapshot — the same notebook discipline as §13's
+  Adam, now in normalized space. `Direction::Forward` (params → features)
+  stands in for the renderer inside merit loops and studies;
+  `Direction::Inverse` (features → params) is a *warm start only*:
+  `dl::warm_start` clamps its prediction into the carrier bounds and the
+  solver (§12–13) still owns the final design.
+- **Identifiability.** The worked problem (docs/architecture.md §7,
+  `examples/surrogate_doe.rs`) tunes focal length $f \in [6, 8.5]$ mm and
+  lens-center offsets $|c| \le 25\,\mu m$ with the observation plane at
+  $z = 10$ mm. Two physical constraints bound the box: $f$ must stay below
+  $z$ (a Gaussian intensity profile at a fixed plane is invariant under
+  the mirror $f \leftrightarrow 2z - f$, so straddling $z$ makes $f$
+  unidentifiable from intensity alone), and the offsets stay inside half a
+  focus shift ($z/f \le 1.7$) so the converging beam never enters the
+  decentered-aperture corner regime where block features vary faster than
+  a few-hundred-sample box can resolve.
+- **Backends.** Training defaults to burn's pure-Rust Flex CPU backend
+  (`Device::flex()`), keeping workspace gates dependency-light; GPU is
+  allowed *here* — never in core — by enabling the matching burn feature
+  (`wgpu`, `cuda`, …) and passing that device to `train_on`. Model code
+  is backend-agnostic in burn ≥ 0.22: tensors carry their device, not a
+  backend type parameter.
+
 ## References
 
 1. *Diffractive Optics: Design, Fabrication, and Test* (workspace root PDF):

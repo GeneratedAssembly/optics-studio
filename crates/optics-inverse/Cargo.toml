@@ -12,11 +12,25 @@ rand = "0.8"
 num-complex = "0.4.6"
 pyo3 = { version = "0.29", features = ["auto-initialize"], optional = true }
 numpy = { version = "0.29", optional = true }
+# Deep-surrogate harness (task 9.14, plan decision 3): burn with the pure-Rust
+# Flex CPU backend by default. GPU (wgpu/cuda) is allowed here, never in core:
+# enable those burn features and pass the matching Device to train_on.
+burn = { version = "0.22", default-features = false, features = [
+  "std",
+  "optim",
+  "flex",
+], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+# float_roundtrip: the default parser is approximate (1-ulp off); dataset
+# persistence must be bit-exact.
+serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 
 [features]
 default = []
 # Custom-merit Python frontend (ADR-9.11): embeds CPython via pyo3.
 py = ["dep:pyo3", "dep:numpy"]
+# Deep surrogates (Milestone C): dataset generation + burn network training.
+dl = ["dep:burn", "dep:serde", "dep:serde_json"]
 
 [dev-dependencies]
 # Task 9.7 golden only: the zemax -> inverse loop test imports a real
@@ -27,6 +41,14 @@ optics-zemax = { path = "../optics-zemax" }
 name = "crlb_doe"
 required-features = ["py"]
 
+[[example]]
+name = "surrogate_doe"
+required-features = ["dl"]
+
 [[test]]
 name = "py_merit"
 required-features = ["py"]
+
+[[test]]
+name = "dl_surrogate"
+required-features = ["dl"]
