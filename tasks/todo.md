@@ -242,7 +242,12 @@ first-order descent. CRLB itself is a USER merit (decision 7), not a built-in.
   identifiability bound), `docs/architecture.md` §7,
   `tests/dl_surrogate.rs`, `examples/surrogate_doe.rs`. (GitHub #6 /
   GEN-49.)
-- [ ] **9.15 Release 0.3.0** + docs. Scope: S.
+- [x] **9.15 Release 0.3.0** + docs. Scope: S. Deps: 9.14.
+  → **released**: version cut 0.2.0 → 0.3.0 (`crates/optics-inverse`),
+  CHANGELOG `[optics-inverse 0.3.0]` section (task 9.14 `dl` work cut
+  from Unreleased), feature `dl` stabilized as the Milestone C public
+  surface, `docs/architecture.md` §7 + roadmap marked Milestone C
+  released (Phase 9 complete). (GitHub #7 / GEN-50.)
 
 ### Checkpoint: Inverse works (end of Phase 9)
 - [ ] GS + one stochastic + one gradient solver recover a known DOE design

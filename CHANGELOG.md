@@ -9,26 +9,6 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
-- **optics-inverse `dl`** (task 9.14, Milestone C opener): the `burn`
-  deep-surrogate harness behind new feature `dl` (burn 0.22 with the
-  pure-Rust Flex CPU backend; GPU allowed here, never in core).
-  `dl::dataset::generate` renders the carrier's bound box headlessly
-  (uniform draws → `Renderer` → per-scene band-summed, block-averaged
-  intensity features) and persists datasets as bit-exact JSON
-  (`serde_json` `float_roundtrip`); `dl::surrogate::train` fits MLPs in
-  both directions — `Direction::Forward` (params → features, renderer
-  stand-in) and `Direction::Inverse` (features → params, solver warm
-  start) — with mini-batch Adam and best-validation-epoch snapshots,
-  per-axis min–max on parameters and one shared min–max on features;
-  `dl::warm_start` clamps predictions into the carrier bounds.
-  Surrogates save/load as burnpack + meta JSON. Docs: `docs/physics.md`
-  §15 (identifiability: the f ↔ 2z−f intensity mirror bounds the worked
-  example's focal box), `docs/architecture.md` §7. Tests
-  `tests/dl_surrogate.rs` (deterministic dataset, forward/inverse
-  learning bounds, burnpack roundtrip); example
-  `examples/surrogate_doe.rs` (surrogate warm start feeding Adam on a
-  real ASM merit). (GitHub #6 / GEN-49.)
-
 - `Material::sellmeier_book1(constant, terms)` (core): generalized Book-1
   form $n^2 = C_0 + \sum B\lambda^2/(\lambda^2 - C)$ — required by the
   H.H. Li (1980) CaF2 parameterization; `sellmeier` is the $C_0 = 1$ case.
@@ -84,6 +64,41 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
   batch designs.
 
 ======
+## [optics-inverse 0.3.0] - 2026-10-15
+
+Phase 9 Milestone C close-out — **deep-surrogate release of the
+`optics-inverse` crate**. Version cut 0.2.0 → 0.3.0 stabilizes the
+`burn` harness delivered with task 9.14 as the public surface of
+feature `dl`: headless dataset generation from the renderer, MLP
+surrogates in both directions (forward renderer stand-in, inverse
+solver warm start), burnpack + meta persistence, Flex CPU by default
+with GPU opt-in through `train_on` — allowed here, never in core.
+Physics documented in `docs/physics.md` §15, crate architecture in
+`docs/architecture.md` §7 (marked Milestone C released, completing
+Phase 9). (GitHub #7 / GEN-50.)
+
+### Added
+
+- **optics-inverse `dl`** (task 9.14, Milestone C opener): the `burn`
+  deep-surrogate harness behind new feature `dl` (burn 0.22 with the
+  pure-Rust Flex CPU backend; GPU allowed here, never in core).
+  `dl::dataset::generate` renders the carrier's bound box headlessly
+  (uniform draws → `Renderer` → per-scene band-summed, block-averaged
+  intensity features) and persists datasets as bit-exact JSON
+  (`serde_json` `float_roundtrip`); `dl::surrogate::train` fits MLPs in
+  both directions — `Direction::Forward` (params → features, renderer
+  stand-in) and `Direction::Inverse` (features → params, solver warm
+  start) — with mini-batch Adam and best-validation-epoch snapshots,
+  per-axis min–max on parameters and one shared min–max on features;
+  `dl::warm_start` clamps predictions into the carrier bounds.
+  Surrogates save/load as burnpack + meta JSON. Docs: `docs/physics.md`
+  §15 (identifiability: the f ↔ 2z−f intensity mirror bounds the worked
+  example's focal box), `docs/architecture.md` §7. Tests
+  `tests/dl_surrogate.rs` (deterministic dataset, forward/inverse
+  learning bounds, burnpack roundtrip); example
+  `examples/surrogate_doe.rs` (surrogate warm start feeding Adam on a
+  real ASM merit). (GitHub #6 / GEN-49.)
+
 ## [optics-studio 0.1.0] - 2026-10-15
 
 Phase-10 web UI — dioxus `=0.7.10`, `wasm32-unknown-unknown`, CSR-only

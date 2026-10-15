@@ -422,11 +422,10 @@ one propagation-level type is a later API decision.
   workspace of sibling crates — `optics-zemax` (prescription import:
   parse → `RefractiveSurface` + medium steps; delivered Phase 8),
   `optics-inverse` (GS/derivative-free/finite-difference first, adjoint
-  later, `burn` deep surrogates last — **Milestones A and B complete,
-  released as 0.1.0 and 0.2.0**, see §7; Milestone C
-  surrogates follow), `optics-studio` (web UI, opt-in workspace
-  member — **Phase 10 complete, released as 0.1.0**, see §8). Design
-  choices below keep these open.
+  later, `burn` deep surrogates — **Milestones A, B and C complete,
+  released as 0.1.0, 0.2.0 and 0.3.0**, see §7), `optics-studio` (web
+  UI, opt-in workspace member — **Phase 10 complete, released as
+  0.1.0**, see §8). Design choices below keep these open.
 
 **Forward-compatibility design choices (decided at Phase-3 planning):**
 
@@ -449,7 +448,7 @@ Out of scope (agents.md): ray tracing / geometric optics, vector field grids,
 GPU/parallelism, dispersive propagators, interactive visualization *inside
 this crate* (the front-end project owns the UI).
 
-## 7. Workspace crate: `optics-inverse` (Phase 9 — 0.1.0/0.2.0 released, 0.3.0 in development)
+## 7. Workspace crate: `optics-inverse` (Phase 9 — 0.1.0/0.2.0/0.3.0 released)
 
 Inverse design flips the forward model: a **design** is parameterized by
 a bounded vector, a **renderer** produces an `Observation`, a **merit**
