@@ -24,6 +24,36 @@ pub enum AppMode {
     Inverse,
 }
 
+/// The center workspace tab (GEN-57: Zemax-style tabbed document area;
+/// the System Explorer on the left drives this selection).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkspaceTab {
+    /// Lens Data Editor: the surface table with element operations.
+    LensData,
+    /// The authoritative `.zmx` text.
+    Text,
+    /// Live preview: schematic strip + PSF frame + sampling banner.
+    Layout,
+    /// System setup: wavelengths, source, engine, paraxial card.
+    Setup,
+    /// PSF/metrics analysis viewport (task 10.2).
+    Analysis,
+    /// Inverse design run console (task 10.3).
+    Run,
+}
+
+impl WorkspaceTab {
+    /// Tab order and labels for the workspace tab strip.
+    pub const ALL: [(WorkspaceTab, &'static str); 6] = [
+        (WorkspaceTab::LensData, "Lens Data"),
+        (WorkspaceTab::Text, "Prescription Text"),
+        (WorkspaceTab::Layout, "Layout"),
+        (WorkspaceTab::Setup, "System Setup"),
+        (WorkspaceTab::Analysis, "PSF Analysis"),
+        (WorkspaceTab::Run, "Inverse Run"),
+    ];
+}
+
 /// Which pipeline produced the current preview frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreviewSource {
@@ -62,6 +92,12 @@ pub struct Shell {
 
     // — prescription working copy (table mode) —
     pub surfaces: Signal<Vec<optics_zemax::ZmxSurface>>,
+
+    // — workspace organization (GEN-57) —
+    /// Selected Lens Data row (list position; `None` = none).
+    pub selected: Signal<Option<usize>>,
+    /// Active center workspace tab.
+    pub tab: Signal<WorkspaceTab>,
 
     // — pickers —
     pub band: Signal<usize>,
@@ -122,6 +158,8 @@ impl Shell {
             glass_names: Signal::new(builtin_glass_names()),
             recent: Signal::new(Vec::new()),
             surfaces: Signal::new(Vec::new()),
+            selected: Signal::new(None),
+            tab: Signal::new(WorkspaceTab::LensData),
             band: Signal::new(0),
             enabled: Signal::new(Vec::new()),
             source: Signal::new(SourceSpec::Point {
@@ -199,6 +237,7 @@ impl Shell {
                 self.parse_error.set(None);
                 self.edited.set(false);
                 self.surfaces.set(surfaces);
+                self.selected.set(None);
                 self.imported.set(Some(sys));
                 self.refresh_forward();
             }
@@ -568,6 +607,142 @@ impl Shell {
     pub fn slide_surface(&mut self, index: usize, field: SurfaceField, value: f64) {
         self.edit_surface(index, field, &value.to_string());
     }
+
+    // — element operations (GEN-57): build a system from scratch —
+
+    /// Select a Lens Data row (drives the toolbar target and the property
+    /// column).
+    pub fn select_row(&mut self, i: usize) {
+        self.selected.set(Some(i));
+    }
+
+    /// Switch the center workspace tab.
+    pub fn set_tab(&mut self, tab: WorkspaceTab) {
+        self.tab.set(tab);
+    }
+
+    /// Start a brand-new blank system (object + image plane) and switch
+    /// to the Lens Data Editor.
+    pub fn new_system(&mut self) {
+        let lambda = self.active_lambda_um().unwrap_or(0.55);
+        let text = optics_zemax::ZmxSystem::blank("untitled", lambda).to_zmx();
+        self.set_document("untitled.zmx", &text);
+        self.mode.set(AppMode::Forward);
+        self.tab.set(WorkspaceTab::LensData);
+        self.selected.set(None);
+        self.push_toast("new system: add a lens or surface before the image plane");
+    }
+
+    /// Run an insert-style edit on the working copy (creating a blank
+    /// system first when there is none), then refresh the preview.
+    fn apply_edit(
+        &mut self,
+        f: impl FnOnce(
+            &mut Vec<optics_zemax::ZmxSurface>,
+            usize,
+        ) -> Result<usize, crate::shell::edit::EditError>,
+    ) {
+        let mut surfaces = self.surfaces.peek().clone();
+        if surfaces.is_empty() {
+            surfaces = crate::shell::edit::blank_surfaces();
+        }
+        let at = match *self.selected.peek() {
+            Some(i) if i + 1 < surfaces.len() => i + 1,
+            _ => surfaces.len() - 1,
+        };
+        match f(&mut surfaces, at) {
+            Ok(pos) => {
+                self.edited.set(true);
+                self.selected.set(Some(pos));
+                self.surfaces.set(surfaces);
+                self.run_preview();
+            }
+            Err(e) => self.push_toast(format!("edit: {e}")),
+        }
+    }
+
+    /// Insert a flat air surface at the target position.
+    pub fn insert_surface(&mut self) {
+        self.apply_edit(crate::shell::edit::insert_surface);
+    }
+
+    /// Insert a biconvex lens (50 mm radius, 4 mm center, 10 mm
+    /// semi-diameter) at the target position, in the default glass.
+    pub fn add_lens(&mut self) {
+        let glass = crate::shell::edit::default_glass(&self.glass_names.peek().clone());
+        self.apply_edit(move |s, at| {
+            crate::shell::edit::add_lens(s, at, 50.0, 4.0, 10.0, glass.clone())
+        });
+    }
+
+    /// Insert a flat window (3 mm thick) at the target position.
+    pub fn add_window(&mut self) {
+        let glass = crate::shell::edit::default_glass(&self.glass_names.peek().clone());
+        self.apply_edit(move |s, at| {
+            crate::shell::edit::add_window(s, at, 3.0, 10.0, glass.clone())
+        });
+    }
+
+    /// Delete the selected element (object/image planes are protected).
+    pub fn delete_surface(&mut self) {
+        let Some(at) = *self.selected.peek() else {
+            self.push_toast("select a surface row first");
+            return;
+        };
+        let mut surfaces = self.surfaces.peek().clone();
+        match crate::shell::edit::remove_surface(&mut surfaces, at) {
+            Ok(()) => {
+                self.edited.set(true);
+                let next = if at + 1 < surfaces.len() {
+                    Some(at)
+                } else {
+                    None
+                };
+                self.surfaces.set(surfaces);
+                self.selected.set(next);
+                self.run_preview();
+            }
+            Err(e) => self.push_toast(format!("edit: {e}")),
+        }
+    }
+
+    /// Flag the selected surface as the stop.
+    pub fn toggle_stop(&mut self) {
+        let Some(at) = *self.selected.peek() else {
+            self.push_toast("select a surface row first");
+            return;
+        };
+        let mut surfaces = self.surfaces.peek().clone();
+        match crate::shell::edit::set_stop(&mut surfaces, at) {
+            Ok(()) => {
+                self.surfaces.set(surfaces);
+                self.edited.set(true);
+                self.run_preview();
+            }
+            Err(e) => self.push_toast(format!("edit: {e}")),
+        }
+    }
+
+    /// Write the table back into the authoritative `.zmx` text and
+    /// re-parse it, clearing the "edited" state.
+    pub fn apply_table_to_text(&mut self) {
+        let surfaces = self.surfaces.peek().clone();
+        if surfaces.is_empty() {
+            self.push_toast("no prescription to apply");
+            return;
+        }
+        let header = self
+            .imported
+            .peek()
+            .as_ref()
+            .map(|sys| sys.system().clone())
+            .unwrap_or_else(|| {
+                optics_zemax::ZmxSystem::blank("untitled", self.lambda_um_or_default())
+            });
+        let text = crate::shell::edit::apply_to_text(&header, &surfaces);
+        self.zmx_text.set(text);
+        self.parse_now();
+    }
 }
 
 /// Editable numeric fields in table mode (spec §3.2).
@@ -617,6 +792,8 @@ sig_getters! {
     glass_names -> Vec<String>,
     recent -> Vec<(String, String)>,
     surfaces -> Vec<optics_zemax::ZmxSurface>,
+    selected -> Option<usize>,
+    tab -> WorkspaceTab,
     band -> usize,
     enabled -> Vec<bool>,
     source -> SourceSpec,

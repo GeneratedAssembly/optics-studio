@@ -21,6 +21,7 @@
 
 pub mod carrier;
 pub mod dispatch;
+pub mod edit;
 pub mod prescription;
 pub mod preview;
 pub mod reference;

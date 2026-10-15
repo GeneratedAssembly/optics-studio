@@ -316,3 +316,32 @@ fn preview_mapping_autoscale_log_and_downsample() {
     let zero = optics_core::field::Psf::new(vec![0.0; 16], 4, 4, 1e-6, 1e-6).unwrap();
     assert!(render_psf(&zero, 512, true).is_ok());
 }
+
+#[test]
+fn built_system_traces_end_to_end() {
+    // GEN-57 element insertion: a system built from scratch (no import)
+    // must round-trip through the .zmx text and trace like any imported
+    // prescription.
+    use optics_studio::shell::edit::{add_lens, apply_to_text, blank_surfaces, set_stop};
+    use optics_zemax::ZmxSystem;
+
+    let mut surfaces = blank_surfaces();
+    add_lens(&mut surfaces, 1, 50.0, 4.0, 10.0, Some("N-BK7".into())).unwrap();
+    set_stop(&mut surfaces, 1).unwrap();
+    let text = apply_to_text(&ZmxSystem::blank("built", 0.55), &surfaces);
+    let back = ZmxSystem::parse(&text).unwrap();
+    assert_eq!(
+        back.surfaces, surfaces,
+        "writer/parser round trip is lossless"
+    );
+
+    let registry = Registry::builtin();
+    let plan = build_plan(&back.surfaces, &registry, 0.55).unwrap();
+    assert_eq!(plan.element_count(), 2, "lens front + back refract");
+    let b = BandField::uniform(1.0, 0.0, 32, 32, 2e-3, 2e-3, 550e-9).unwrap();
+    let psf = plan
+        .psf_with(&b, &EngineSettings::default())
+        .expect("built system traces");
+    assert!(psf.samples().iter().all(|v| v.is_finite() && *v >= 0.0));
+    assert!(psf.total_power() > 0.0, "power conserved through the lens");
+}

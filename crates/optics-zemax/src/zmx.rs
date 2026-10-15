@@ -50,7 +50,32 @@ pub struct ZmxSurface {
     pub glass: Option<String>,
 }
 
+impl ZmxSurface {
+    /// Flat `STANDARD` surface: no power, no glass after it, semi-diameter
+    /// unset (`DIAM 0` = unbounded). `thickness_mm` `None` = `INFINITY`.
+    pub fn flat(index: usize, thickness_mm: Option<f64>) -> Self {
+        Self {
+            index,
+            kind: "STANDARD".into(),
+            stop: false,
+            comment: String::new(),
+            curvature_mm: 0.0,
+            conic: 0.0,
+            has_para: false,
+            mirror: false,
+            semi_diam_mm: 0.0,
+            thickness_mm,
+            glass: None,
+        }
+    }
+}
+
 /// A parsed sequential prescription.
+///
+/// The same type is also the in-memory model for the studio editor:
+/// [`ZmxSystem::blank`] starts a new sequential system and
+/// [`ZmxSystem::to_zmx`] writes one back out as `.zmx` text, so table
+/// edits can persist into the authoritative text source.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ZmxSystem {
     /// `NAME` text.
@@ -215,6 +240,83 @@ impl ZmxSystem {
     pub fn primary_um(&self) -> f64 {
         self.wavelengths_um[self.primary]
     }
+
+    /// A minimal new sequential system: object at infinity plus an image
+    /// plane, one wavelength (µm) as primary, `MM` lens units. This is the
+    /// starting point for building a system in the studio editor; add
+    /// surfaces between the object and the image plane.
+    pub fn blank(name: &str, lambda_um: f64) -> Self {
+        Self {
+            name: name.to_string(),
+            catalog: String::new(),
+            enpd_mm: 0.0,
+            wavelengths_um: vec![lambda_um],
+            primary: 0,
+            surfaces: vec![
+                {
+                    let mut o = ZmxSurface::flat(0, None);
+                    o.comment = "Object".into();
+                    o
+                },
+                {
+                    let mut i = ZmxSurface::flat(1, Some(0.0));
+                    i.comment = "Image".into();
+                    i
+                },
+            ],
+        }
+    }
+
+    /// Serialize back to `.zmx` text (grammar documented at the module
+    /// head; lens units `MM`, weights all 1). `ZmxSystem::parse` of the
+    /// output reproduces the same numeric fields — `has_para` and
+    /// `mirror` are not written (the builder rejects both anyway).
+    pub fn to_zmx(&self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        out.push_str("MODE SEQ\n");
+        if !self.name.is_empty() {
+            let _ = writeln!(out, "NAME {}", self.name);
+        }
+        out.push_str("UNIT MM MM MM MM MM MM\n");
+        if self.enpd_mm != 0.0 {
+            let _ = writeln!(out, "ENPD {}", self.enpd_mm);
+        }
+        if !self.catalog.is_empty() {
+            let _ = writeln!(out, "GCAT {}", self.catalog);
+        }
+        for (i, w) in self.wavelengths_um.iter().enumerate() {
+            let _ = writeln!(out, "WAVM {} {} 1", i + 1, w);
+        }
+        let _ = writeln!(out, "PWAV {}", self.primary + 1);
+        for s in &self.surfaces {
+            let _ = writeln!(out, "SURF {}", s.index);
+            if !s.comment.is_empty() {
+                let _ = writeln!(out, "  COMM {}", s.comment);
+            }
+            if s.stop {
+                out.push_str("  STOP\n");
+            }
+            let _ = writeln!(out, "  TYPE {}", s.kind);
+            let _ = writeln!(out, "  CURV {}", s.curvature_mm);
+            if s.conic != 0.0 {
+                let _ = writeln!(out, "  CONI {}", s.conic);
+            }
+            if s.semi_diam_mm != 0.0 {
+                let _ = writeln!(out, "  DIAM {}", s.semi_diam_mm);
+            }
+            match s.thickness_mm {
+                Some(t) => {
+                    let _ = writeln!(out, "  DISZ {}", t);
+                }
+                None => out.push_str("  DISZ INFINITY\n"),
+            }
+            if let Some(g) = &s.glass {
+                let _ = writeln!(out, "  GLAS {g} 1 1");
+            }
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -275,5 +377,72 @@ mod tests {
         assert!((sys.enpd_mm - 20.0).abs() < 1e-12); // 2 cm
         assert!((sys.surfaces[1].curvature_mm - 0.01).abs() < 1e-15); // 0.1/cm
         assert!((sys.surfaces[1].thickness_mm.unwrap() - 5.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn blank_round_trips_through_text() {
+        let sys = ZmxSystem::blank("untitled", 0.55);
+        let text = sys.to_zmx();
+        let back = ZmxSystem::parse(&text).unwrap();
+        assert_eq!(back, sys);
+        assert_eq!(back.surfaces[0].thickness_mm, None); // object at infinity
+        assert_eq!(back.surfaces[1].comment, "Image");
+    }
+
+    #[test]
+    fn writer_preserves_numeric_surface_fields() {
+        // The studio's table model edits these fields; a write must
+        // reproduce them exactly (shortest-round-trip float formatting).
+        let sys = ZmxSystem {
+            name: "test".into(),
+            catalog: "SCHOTT".into(),
+            enpd_mm: 18.0,
+            wavelengths_um: vec![0.4, 0.55, 0.7],
+            primary: 1,
+            surfaces: vec![
+                {
+                    let mut o = ZmxSurface::flat(0, None);
+                    o.comment = "Object".into();
+                    o
+                },
+                ZmxSurface {
+                    index: 1,
+                    kind: "STANDARD".into(),
+                    stop: true,
+                    comment: String::new(),
+                    curvature_mm: 3.2970656116056714e-2,
+                    conic: -0.5,
+                    has_para: false,
+                    mirror: false,
+                    semi_diam_mm: 11.125,
+                    thickness_mm: Some(7.1),
+                    glass: Some("CAF2".into()),
+                },
+                ZmxSurface::flat(2, Some(0.0)),
+            ],
+        };
+        let back = ZmxSystem::parse(&sys.to_zmx()).unwrap();
+        assert_eq!(back, sys);
+    }
+
+    #[test]
+    fn aca254_writer_roundtrip_keeps_editable_fields() {
+        let sys = ZmxSystem::parse(&text()).unwrap();
+        let back = ZmxSystem::parse(&sys.to_zmx()).unwrap();
+        assert_eq!(back.name, sys.name);
+        assert_eq!(back.catalog, sys.catalog);
+        assert_eq!(back.enpd_mm, sys.enpd_mm);
+        assert_eq!(back.wavelengths_um, sys.wavelengths_um);
+        assert_eq!(back.primary, sys.primary);
+        assert_eq!(back.surfaces.len(), sys.surfaces.len());
+        for (a, b) in back.surfaces.iter().zip(sys.surfaces.iter()) {
+            assert_eq!(a.index, b.index);
+            assert_eq!(a.stop, b.stop);
+            assert_eq!(a.curvature_mm, b.curvature_mm);
+            assert_eq!(a.conic, b.conic);
+            assert_eq!(a.semi_diam_mm, b.semi_diam_mm);
+            assert_eq!(a.thickness_mm, b.thickness_mm);
+            assert_eq!(a.glass, b.glass);
+        }
     }
 }

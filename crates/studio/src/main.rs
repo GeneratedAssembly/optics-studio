@@ -1,8 +1,10 @@
 //! optics-studio binary entry (dioxus CSR launch).
 //!
 //! On wasm32 this launches [`optics_studio::ui::App`], the combined root:
-//! the task-10.2 viewport (`app::Studio`) above the task-10.3 inverse run
-//! console. The solver worker is bootstrapped by
+//! the GEN-57 Zemax-style workspace (System Explorer, tabbed Lens Data
+//! Editor / Layout / Setup / Analysis / Run dock, system summary), with
+//! the task-10.2 viewport and the task-10.3 inverse run console mounted
+//! inside tabs. The solver worker is bootstrapped by
 //! `optics_studio::bridge::worker_bootstrap` (`#[wasm_bindgen(start)]`)
 //! whenever the module loads inside a worker scope. Native builds are a
 //! no-op stub: the app is wasm-only (ADR-10.0), and the pure view model and

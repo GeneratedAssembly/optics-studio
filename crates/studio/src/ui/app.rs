@@ -1,21 +1,29 @@
-//! Application root. Composes the task-10.1 shell (prescription /
-//! slider column + live preview, [`crate::shell::ui`]) with the
-//! task-10.2 PSF/metrics viewport ([`crate::app::Studio`]) and the
-//! task-10.3 inverse run console ([`RunConsole`]) in the spec §3
-//! three-region layout: editor column left, viewport center, setup
-//! column right, run console bottom.
+//! Application root. GEN-57 layout: Zemax-style three-region workspace —
+//! System Explorer navigation column (left), tabbed document workspace
+//! (center: Lens Data Editor, Prescription Text, Layout, System Setup,
+//! PSF Analysis, Inverse Run), and a system summary / properties column
+//! (right). The task-10.2 viewport ([`crate::app::Studio`]) and the
+//! task-10.3 run console ([`RunConsole`]) mount inside workspace tabs.
 
 use dioxus::prelude::*;
 
+use crate::shell::ui::panels::{CarrierPanel, PrescriptionTable, SetupPanels, TextEditor};
 use crate::shell::ui::studio::Shell;
 use crate::shell::ui::style as shell_style;
-use crate::shell::ui::{ShellColumn, ShellPreview, ShellSetup, ShellToasts};
+use crate::shell::ui::{
+    ModeSwitch, ShellColumn, ShellPreview, ShellSetup, ShellToasts, WorkspaceTab, WorkspaceTabs,
+};
 
 use super::run_console::RunConsole;
 
 const CSS: &str = r#"
 body { margin: 0; background: #12151c; color: #dbe2ea; font: 14px/1.4 system-ui, sans-serif; }
-.app { padding: 1rem 1.5rem; max-width: 1400px; margin: 0 auto; }
+.app { padding: 0.5rem 0.9rem; max-width: none; }
+.app-top { display: flex; align-items: center; gap: 14px; padding: 0.35rem 0 0.6rem; border-bottom: 1px solid #232a36; margin-bottom: 0.7rem; }
+.app-top .brand { font-size: 15px; font-weight: 650; letter-spacing: 0.02em; }
+.app-top .brand em { color: #7fd1ff; font-style: normal; }
+.doc-name { color: #93a1b3; font-size: 12.5px; }
+.app-top .spacer { flex: 1; }
 .app > h2 { font-size: 16px; font-weight: 600; margin: 1.25rem 0 0.25rem; }
 .subtitle { color: #7c8898; font-size: 12px; margin: 0 0 1rem; }
 .console { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap; }
@@ -43,7 +51,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 details pre { background: #0c0f15; padding: 0.6rem; border-radius: 6px; font-size: 11px; overflow-x: auto; }
 "#;
 
-/// The optics-studio app root: shell + viewport + run console.
+/// The optics-studio app root: explorer + tabbed workspace + summary.
 #[component]
 pub fn App() -> Element {
     // Task-10.4 round-trip seam: the viewport model is shared context at
@@ -56,26 +64,38 @@ pub fn App() -> Element {
                 .unwrap_or_else(|e| panic!("demo model failed to build: {e}")),
         ))
     });
-    let _shell = use_context_provider(|| Shell::new(viewport_model));
+    let shell = use_context_provider(|| Shell::new(viewport_model));
+    let tab = shell.tab();
+    let doc = shell.doc_name();
+    let workspace = match tab {
+        WorkspaceTab::LensData => rsx! { PrescriptionTable {} },
+        WorkspaceTab::Text => rsx! { TextEditor {} },
+        WorkspaceTab::Layout => rsx! { ShellPreview {} },
+        WorkspaceTab::Setup => rsx! { SetupPanels {} },
+        WorkspaceTab::Analysis => rsx! { crate::app::Studio {} },
+        WorkspaceTab::Run => rsx! {
+            CarrierPanel {}
+            RunConsole {}
+        },
+    };
     rsx! {
         style { "{CSS}" }
         style { {shell_style::CSS} }
         div { class: "app",
+            header { class: "app-top",
+                span { class: "brand", "optics-" em { "studio" } }
+                span { class: "doc-name", if doc.is_empty() { "no document" } else { "{doc}" } }
+                span { class: "spacer" }
+                ModeSwitch {}
+            }
             div { class: "studio-grid",
                 aside { class: "grid-left", ShellColumn {} }
                 main { class: "grid-center",
-                    ShellPreview {}
-                    crate::app::Studio {}
+                    WorkspaceTabs {}
+                    div { class: "workspace", {workspace} }
                 }
                 aside { class: "grid-right", ShellSetup {} }
             }
-            h2 { "Inverse run controls" }
-            p { class: "subtitle",
-                "task 10.3 — start/stop solvers, convergence plot. Solver runs \
-                execute in a dedicated web worker (gloo-worker, ADR-10.0 Q3) with \
-                an inline fallback. optics-inverse 0.1.0 solvers; no physics in the UI crate."
-            }
-            RunConsole {}
         }
         ShellToasts {}
     }

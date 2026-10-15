@@ -9,6 +9,18 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- UI reorganization + element insertion (GEN-57): the optics-studio shell
+  now follows Zemax's workspace language — a System Explorer tree (left),
+  a tabbed document workspace (Lens Data Editor, Prescription Text,
+  Layout, System Setup, PSF Analysis, Inverse Run), and an always-visible
+  System Summary with selected-surface properties (right). The Lens Data
+  Editor builds a full system from scratch: new blank system, insert flat
+  surface / biconvex lens / flat window at the selection, delete, stop
+  flag (object and image planes protected). `optics-zemax`: `ZmxSystem::blank`,
+  `ZmxSurface::flat`, and `ZmxSystem::to_zmx` write a parsed-or-built
+  system back as `.zmx` text (`parse` reproduces it), so "Apply to Text"
+  persists table edits — gap G-1 (spec §7) closed for the UI path.
+
 - Readme pass (GEN-56): full root `README.md` (repository layout, per-crate
   overview, UI quickstart, gates, examples), new crate readmes for
   `optics-zemax` and `optics-inverse`; `crates/studio/README.md` already

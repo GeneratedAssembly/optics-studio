@@ -8,11 +8,34 @@ pub const CSS: &str = r#"
 .mode-switch { display: flex; gap: 6px; margin-bottom: 2px; }
 .mode-switch button { background: #202836; color: #9fb0c3; border: 1px solid #2c3a4e; border-radius: 6px; padding: 4px 12px; cursor: pointer; }
 .mode-switch button.active { background: #2b425c; color: #e8f1fa; border-color: #3f6a96; }
-.studio-grid { display: grid; grid-template-columns: 360px minmax(480px, 1fr) 320px; gap: 12px; align-items: start; }
+.studio-grid { display: grid; grid-template-columns: 260px minmax(480px, 1fr) 300px; gap: 12px; align-items: start; }
 .app { max-width: none; }
 .grid-left, .grid-right { display: flex; flex-direction: column; gap: 10px; }
 .grid-center { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 @media (max-width: 1100px) { .studio-grid { grid-template-columns: 1fr; } }
+/* GEN-57 workspace tabs (Zemax-style document tab strip) */
+.wtab-bar { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid #232c38; padding: 0 2px; }
+.wtab { background: transparent; color: #7d8ea3; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; padding: 5px 12px; cursor: pointer; font-size: 12.5px; }
+.wtab:hover { color: #cfe0f2; }
+.wtab.active { background: #161c24; color: #e8f1fa; border-color: #232c38; }
+.workspace { display: flex; flex-direction: column; gap: 10px; }
+/* GEN-57 System Explorer tree */
+.tree { padding: 8px 10px; }
+.tree-group { margin-bottom: 8px; }
+.tree-h { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.8px; color: #5f7086; margin: 6px 0 3px; }
+.tree-item { display: block; width: 100%; text-align: left; background: transparent; border: 0; border-left: 2px solid transparent; color: #9fb0c3; padding: 3px 8px 3px 12px; cursor: pointer; font-size: 12.5px; border-radius: 0 5px 5px 0; }
+.tree-item:hover { background: #1b2230; color: #dbe2ea; }
+.tree-item.active { background: #20293a; color: #e8f1fa; border-left-color: #4b8fd1; }
+/* GEN-57 Lens Data toolbar + selection */
+.editor-toolbar { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.editor-toolbar .btn { padding: 3px 9px; font-size: 12px; }
+.editor-toolbar .btn.danger { background: #4a2431; border-color: #6b2435; }
+.editor-toolbar .btn.apply { background: #1d4a34; border-color: #2f6b4c; }
+table.surf tr.selected td { background: #24405c; }
+table.surf tbody tr { cursor: pointer; }
+/* GEN-57 summary card */
+.sum-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: #7d8ea3; padding: 1.5px 0; }
+.sum-row .val { color: #d7dce3; font-family: ui-monospace, monospace; text-align: right; }
 .panel { background: #161c24; border: 1px solid #232c38; border-radius: 8px; padding: 10px 12px; }
 .panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #7d8ea3; margin: 0 0 8px; }
 button { font: inherit; }

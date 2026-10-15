@@ -20,7 +20,14 @@ Revision note (task 10.3, 2026-10-14): re-verified against optics-inverse
 was added for the chunked continuation loop. The run console itself ships
 in `crates/studio` (`run/` + `bridge.rs` + `ui/run_console.rs`).
 
----
+Revision note (GEN-57, 2026-10-14): the shell is reorganized into a
+Zemax-style workspace (see §3.0). The flat three-column panel stack is
+replaced by a tabbed document workspace driven by a System Explorer tree;
+the 10.2 viewport and 10.3 run console mount inside tabs instead of the
+page flow. Element insertion (`shell/edit.rs`) and the `.zmx` writer
+(`optics_zemax::ZmxSystem::to_zmx`) close gap G-1 for the UI path: a
+system can now be built from scratch and persisted through the
+authoritative text.
 
 ## 1. Personas
 
@@ -147,10 +154,36 @@ Steps and their backing APIs:
 
 ## 3. Screen inventory and interaction flows (10.1–10.3)
 
-Layout: single-window web app, three regions — left **prescription/editor
-column**, center **viewport** (PSF + metric tabs), right/bottom **run
-console** (inverse controls + convergence). One screen set serves both
-workflows; the mode (forward/inverse) selects which panels are active.
+Single-window web app; one screen set serves both workflows, and the mode
+(forward/inverse) selects which panels drive the live preview. The GEN-57
+organization below replaces the original flat three-region stack.
+
+### 3.0 Workspace organization (GEN-57)
+
+Layout follows how OpticStudio organizes work — explorer, tabbed
+documents, live summary — with a clean modern look rather than a verbatim
+copy:
+
+- **Top bar**: brand, active document name, Forward/Inverse mode switch.
+- **Left column**: file actions (import `.zmx`, load `.AGF`, sample,
+  recent) above the **System Explorer** tree (Prescription / System /
+  Viewers / Inverse Design sections; clicking an item opens its tab).
+- **Center workspace**: a document tab strip — **Lens Data Editor**,
+  **Prescription Text**, **Layout** (strip + live PSF + banner), **System
+  Setup** (wavelengths, source, engine, paraxial), **PSF Analysis** (the
+  10.2 viewport), **Inverse Run** (carrier sliders + the 10.3 console).
+- **Right column**: always-visible **System Summary** (document, surface
+  count, stop, active λ, EFL/BFL, edited/stale badges) plus the selected
+  surface's properties.
+
+**Element insertion.** The Lens Data Editor toolbar starts a blank system
+(`ZmxSystem::blank`, object + image plane) and inserts elements at the
+selected row: flat surface, biconvex lens (two surfaces + glass), flat
+window; delete and stop-flag act on the selection. Object and image planes
+are protected. "Apply to Text" serializes the working copy through
+`ZmxSystem::to_zmx` into the authoritative `.zmx` text and re-parses, so
+a built system persists and re-imports identically (round-trip tested).
+
 
 ### 3.1 Application shell (10.1)
 
@@ -173,22 +206,25 @@ toasts carrying the typed error's `Display` text.
 
 Two editing modes, both bound to real APIs:
 
-- **Text mode (authoritative).** The `.zmx` source is shown in a code
-  editor; edits validate by `ImportedSystem::parse(text)` on debounce
-  (~250 ms). Parse errors display line-level `ZemaxError` text. This is the
-  only path that can produce a *truly* re-importable prescription — see gap
-  G-1 (no serializer, so table edits round-trip through text, not objects).
-- **Table/parameter mode (live simulation only).** The UI keeps its own
-  `Vec<ZmxSurface>` (clone of `system().surfaces`) and edits numeric fields
-  (`curvature_mm`, `conic`, `semi_diam_mm`, `thickness_mm`, `glass` via a
-  catalog combobox backed by `optics_zemax::catalog::BUILTIN` /
+- **Text mode (authoritative).** The `.zmx` source is shown in the
+  Prescription Text tab; edits validate by `ImportedSystem::parse(text)` on
+  debounce (~250 ms). Parse errors display line-level `ZemaxError` text.
+  This remains the path that produces a re-importable prescription; since
+  GEN-57 the table can be written back into it (see below), so the two
+  modes no longer diverge.
+- **Table/parameter mode (live simulation).** The Lens Data Editor keeps
+  its own `Vec<ZmxSurface>` (clone of `system().surfaces`) and edits numeric
+  fields (`curvature_mm`, `conic`, `semi_diam_mm`, `thickness_mm`, `glass`
+  via a catalog combobox backed by `optics_zemax::catalog::BUILTIN` /
   `Registry::material(name)`). Edited surfaces rebuild a simulation beamline
   directly with core types: `RefractiveSurface::new` with
   `SurfaceProfile::Conic { radius, conic }` (note: `CURV` is 1/mm — the UI
   converts to meters-radius), `ClearAperture::Circle(semi_diam)`, gaps via
   `Beamline::gap(z, medium)` / `push_medium`, then `Beamline::psf(band,
-  engine)`. The imported `ImportedSystem` itself is immutable (gap G-1);
-  the UI marks the session "edited, re-parse to persist".
+  engine)`. The imported `ImportedSystem` itself stays immutable; **Apply to
+  Text** (GEN-57) serializes the working copy with
+  `ZmxSystem::to_zmx` and re-parses it, so table edits — including inserted
+  and deleted elements — persist instead of living only in memory.
 
 **Sliders.** For inverse designs, the parameter list is `Carrier::params()
 -> &Params` → `Param { name, lo, hi, value, fd_step }`: one slider per slot
@@ -402,7 +438,7 @@ slider row.
 
 | ID | Gap | Affected screens | Suggested resolution (not committed) |
 |---|---|---|---|
-| G-1 | No `.zmx` serializer and no constructor from an edited `ZmxSystem` (`ImportedSystem` fields private; only `parse`/`load` from text) | 10.1 editor persistence | Round-trip edits through the text editor (works today); a writer task if table-mode persistence is wanted |
+| G-1 | No `.zmx` serializer and no constructor from an edited `ZmxSystem` (`ImportedSystem` fields private; only `parse`/`load` from text) | 10.1 editor persistence | **Resolved for the UI path (GEN-57):** `optics_zemax::ZmxSystem::blank` + `to_zmx` and `crates/studio/src/shell/edit.rs` let the Lens Data Editor build, insert into, and serialize the working copy; "Apply to Text" re-parses the authoritative source (round-trip tested). `ImportedSystem` fields remain private — the writer lives on `ZmxSystem`. |
 | G-2 | `solve()` is synchronous — no progress callback, cancellation token, or streaming history | 10.3 start/stop | **Resolved for 10.3** by the chunked budget loop in `crates/studio/src/run/session.rs` (spec §3.4): `RunSession` runs one budget slice per `solve` call and carries `best` through `Carrier::params_mut` (new accessor). A native `solve_with_progress`/cancel API in `optics-inverse` would still replace the workaround. |
 | G-3 | Solver zoo is partial: only `Solver::RandomWalk` + `Annealing` exist. Gerchberg–Saxton (todo 9.8), FD-Adam (9.7), adjoint (9.9) are not in the public surface yet | 10.3 solver picker | **Resolved:** `Solver::Adam` (9.7) is now in the public surface and the picker ships Random walk / Annealing / Adam. GS (9.8) and adjoint (9.9) reach the UI in a later task (they are grid-domain, not `Params`-domain, so they do not fit the `solve` chunk loop). |
 | G-4 | No gradient-based solver entry point in `solve` (merit `obs_gradient` seam exists, unused by solvers) | 10.3 | **Resolved for the UI path:** `Solver::Adam` drives FD gradients through `solve`; merit `obs_gradient`/adjoint (`grid_gradient`, 9.9) remain a headless seam for a future grid solver. |

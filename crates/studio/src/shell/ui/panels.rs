@@ -1,10 +1,12 @@
-//! Editor-column and setup panels (spec §3.1–§3.2).
+//! Shell panels (GEN-57 layout): the left-column file actions, the
+//! Lens Data Editor with element-insertion toolbar, the `.zmx` text tab,
+//! the System Setup panels, the right-column system summary, and the
+//! carrier sliders (spec §3.1–§3.2).
 
 use dioxus::prelude::*;
 use optics_zemax::ImportedSystem;
 
-use super::studio::Shell;
-use super::studio::SurfaceField;
+use super::studio::{Shell, SurfaceField};
 use crate::shell::dispatch::{EnginePick, EngineSettings};
 use crate::shell::prescription::image_distance_mm;
 use crate::shell::source::SourceSpec;
@@ -629,16 +631,42 @@ pub fn PrescriptionTable() -> Element {
     let surfaces = studio.surfaces();
     let phase = studio.phase_steps();
     let glasses = studio.glass_names();
+    let selected = studio.selected();
+    let edited = studio.edited();
+    let toolbar = rsx! {
+        div { class: "editor-toolbar",
+            button { class: "btn", title: "Start a blank system (object + image plane)",
+                onclick: move |_| { let mut s = studio; s.new_system(); }, "New System" }
+            button { class: "btn", title: "Insert a biconvex lens at the selection",
+                onclick: move |_| { let mut s = studio; s.add_lens(); }, "Add Lens" }
+            button { class: "btn", title: "Insert a flat window at the selection",
+                onclick: move |_| { let mut s = studio; s.add_window(); }, "Add Window" }
+            button { class: "btn", title: "Insert one flat air surface at the selection",
+                onclick: move |_| { let mut s = studio; s.insert_surface(); }, "Insert Surface" }
+            button { class: "btn danger", disabled: selected.is_none(),
+                title: "Delete the selected surface",
+                onclick: move |_| { let mut s = studio; s.delete_surface(); }, "Delete" }
+            button { class: "btn", disabled: selected.is_none(),
+                title: "Flag the selected surface as the stop",
+                onclick: move |_| { let mut s = studio; s.toggle_stop(); }, "Set Stop" }
+            span { style: "flex:1" }
+            button { class: "btn apply", disabled: !edited,
+                title: "Write the table back into the .zmx text (authoritative source) and re-parse",
+                onclick: move |_| { let mut s = studio; s.apply_table_to_text(); }, "Apply to Text" }
+        }
+    };
     rsx! {
         div { class: "panel",
-            h2 { "Prescription (table mode — live simulation only)" }
+            h2 { "Lens Data Editor" }
+            {toolbar}
             if surfaces.is_empty() {
-                div { class: "small", "import a .zmx to edit surfaces" }
+                div { class: "small", "no surfaces yet — start a New System or import a .zmx" }
             } else {
                 table { class: "surf",
                     thead {
                         tr {
-                            th { "idx" }
+                            th { "SURF" }
+                            th { "TYPE" }
                             th { "CURV 1/mm" }
                             th { "conic" }
                             th { "semi (mm)" }
@@ -651,8 +679,18 @@ pub fn PrescriptionTable() -> Element {
                         for (i, s) in surfaces.iter().enumerate() {
                             tr {
                                 key: "{i}",
-                                class: if phase.iter().any(|(idx, v)| *idx == s.index && *v > 2.0) { "flagged" } else { "" },
+                                class: [
+                                    if phase.iter().any(|(idx, v)| *idx == s.index && *v > 2.0) { "flagged" } else { "" },
+                                    if selected == Some(i) { "selected" } else { "" },
+                                ].join(" "),
+                                onclick: {
+                                    move |_| {
+                                        let mut st = studio;
+                                        st.select_row(i);
+                                    }
+                                },
                                 td { "{s.index}" if s.stop { span { class: "stop-flag", " STOP" } } }
+                                td { class: "small", "{s.kind}" }
                                 td {
                                     {surf_input(studio, i, SurfaceField::Curvature, format!("{:.6}", s.curvature_mm), "-0.1", "0.1", "0.0005")}
                                 }
@@ -789,5 +827,83 @@ pub fn CarrierPanel() -> Element {
                 div { class: "err", "{e}" }
             }
         }
+    }
+}
+
+/// Right-hand summary card (GEN-57): document state, system numbers, and
+/// the selected surface — the always-visible counterpart to the tabbed
+/// workspace.
+#[component]
+pub fn SummaryPanel() -> Element {
+    let studio = use_context::<Shell>();
+    let doc = studio.doc_name();
+    let edited = studio.edited();
+    let stale = studio.stale();
+    let surfaces = studio.surfaces();
+    let selected = studio.selected();
+    let imported = studio.imported();
+    let band = studio.band();
+    let card = paraxial_of(&imported, band, &surfaces);
+    let lambda = studio
+        .active_lambda_um()
+        .map(|w| format!("{w:.4} µm"))
+        .unwrap_or_else(|| "— (0.55 µm default)".into());
+    let stop = surfaces
+        .iter()
+        .position(|s| s.stop)
+        .map(|i| i.to_string())
+        .unwrap_or_else(|| "—".into());
+    let element_count = surfaces.len().saturating_sub(2);
+    let sel = selected.and_then(|i| surfaces.get(i));
+    let sel_glass = sel
+        .and_then(|s| s.glass.clone())
+        .unwrap_or_else(|| "—".into());
+    rsx! {
+        div { class: "panel",
+            h2 { "System Summary" }
+            div { class: "sum-row", span { "document" }
+                span { class: "val", if doc.is_empty() { "—" } else { "{doc}" } } }
+            div { class: "sum-row", span { "surfaces" }
+                span { class: "val", "{surfaces.len()} ({element_count} elements)" } }
+            div { class: "sum-row", span { "stop" } span { class: "val", "{stop}" } }
+            div { class: "sum-row", span { "λ active" } span { class: "val", "{lambda}" } }
+            if let Some((efl, bfl, _)) = card {
+                div { class: "sum-row", span { "EFL / BFL" }
+                    span { class: "val", "{efl:.3} / {bfl:.3} mm" } }
+            }
+            if edited {
+                div { class: "row", span { class: "badge edited", "edited — Apply to Text to persist" } }
+            }
+            if stale {
+                div { class: "row", span { class: "badge stale", "preview stale" } }
+            }
+            if let Some(s) = sel {
+                h2 { "Selected Surface" }
+                div { class: "sum-row", span { "SURF" } span { class: "val", "{s.index}" } }
+                div { class: "sum-row", span { "CURV" } span { class: "val", "{s.curvature_mm:.6} 1/mm" } }
+                div { class: "sum-row", span { "conic" } span { class: "val", "{s.conic:.4}" } }
+                div { class: "sum-row", span { "semi" } span { class: "val", "{s.semi_diam_mm:.3} mm" } }
+                div { class: "sum-row", span { "thick" } span { class: "val", "{thick_of(s)} mm" } }
+                div { class: "sum-row", span { "glass" } span { class: "val", "{sel_glass}" } }
+                if !s.comment.is_empty() {
+                    div { class: "sum-row", span { "comment" } span { class: "val", "{s.comment}" } }
+                }
+            } else {
+                div { class: "small", "click a Lens Data row for its properties" }
+            }
+        }
+    }
+}
+
+/// Setup tab content: the system-wide editors grouped like Zemax's
+/// System Explorer sections (wavelengths, source, engine) plus the
+/// paraxial cross-check.
+#[component]
+pub fn SetupPanels() -> Element {
+    rsx! {
+        WavelengthPanel {}
+        SourcePanel {}
+        EnginePanel {}
+        ParaxialCard {}
     }
 }
