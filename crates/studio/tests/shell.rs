@@ -345,3 +345,45 @@ fn built_system_traces_end_to_end() {
     assert!(psf.samples().iter().all(|v| v.is_finite() && *v >= 0.0));
     assert!(psf.total_power() > 0.0, "power conserved through the lens");
 }
+
+#[test]
+fn layout2d_uses_true_conic_sag_and_paraxial_focus() {
+    use optics_core::element::SurfaceProfile;
+    use optics_studio::shell::layout2d::build_layout;
+
+    let sys = imported();
+    let registry = Registry::builtin();
+    let lam = sys.system().primary_um();
+    let model = build_layout(&sys.system().surfaces, &registry, lam, Some(&sys));
+    assert!(model.ok);
+    assert_eq!(model.surfaces.len(), sys.system().surfaces.len() - 2);
+    assert_eq!(model.gaps.len(), model.surfaces.len());
+    assert!(model.track_mm > 0.0);
+    assert!(model.max_semi_mm > 0.0);
+    // The paraxial reference is the imported system's own BFL at the band.
+    let expected_bfl = sys.paraxial_at(lam).unwrap().bfl_mm;
+    assert_eq!(model.bfl_mm, Some(expected_bfl));
+    // First surface curve samples the real conic sag (CURV 1/mm -> m radius).
+    let s0 = &model.surfaces[0];
+    let r0 = s0.y_mm[1]; // first non-zero sample (mm)
+    let prof = SurfaceProfile::Conic {
+        radius: 1e-3 / sys.system().surfaces[1].curvature_mm,
+        conic: sys.system().surfaces[1].conic,
+    };
+    assert_eq!(s0.sag_mm[1], prof.sag(r0 * 1e-3) * 1e3);
+    assert!(s0.sag_mm[0] == 0.0, "vertex sag is zero by construction");
+}
+
+#[test]
+fn layout2d_empty_for_short_systems() {
+    use optics_studio::shell::layout2d::build_layout;
+    let registry = Registry::builtin();
+    let model = build_layout(&[], &registry, 0.55, None);
+    assert!(model.surfaces.is_empty() && model.ok);
+    let two = optics_zemax::ZmxSystem::blank("t", 0.55).surfaces;
+    let model = build_layout(&two, &registry, 0.55, None);
+    assert!(
+        model.surfaces.is_empty(),
+        "object+image only -> no refracting surface"
+    );
+}

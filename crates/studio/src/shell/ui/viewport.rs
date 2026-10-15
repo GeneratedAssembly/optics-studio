@@ -6,6 +6,7 @@
 
 use dioxus::prelude::*;
 
+use super::layout2d::Layout2dSvg;
 use super::strip::StripSvg;
 use super::studio::{PreviewSource, Shell};
 
@@ -108,8 +109,8 @@ pub fn LiveLayout() -> Element {
     let nodes = strip.nodes.len();
     rsx! {
         div { class: "panel live-layout",
-            h2 { "Live layout" }
-            StripSvg {}
+            h2 { "Live 2D layout" }
+            Layout2dSvg {}
             div { class: "live-layout-row",
                 if let Some(url) = image {
                     img { class: "psf-img mini", src: "{url}" }

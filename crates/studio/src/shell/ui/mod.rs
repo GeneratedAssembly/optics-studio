@@ -11,6 +11,7 @@
 //! Analysis / Run tabs.
 
 pub mod explorer;
+pub mod layout2d;
 pub mod panels;
 pub mod strip;
 pub mod studio;

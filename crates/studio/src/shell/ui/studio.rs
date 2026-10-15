@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use crate::shell::carrier::demo_carrier;
 use crate::shell::dispatch::{self, Banner, BannerLevel, EnginePick, EngineSettings};
+use crate::shell::layout2d::{self, LayoutModel};
 use crate::shell::prescription::{StripModel, build_plan, strip_from_design};
 use crate::shell::preview::{bmp_data_url, render_psf};
 use crate::shell::reference;
@@ -94,6 +95,9 @@ pub struct Shell {
     pub surfaces: Signal<Vec<optics_zemax::ZmxSurface>>,
 
     // — workspace organization (GEN-57) —
+    /// 2D Layout cross-section model (live, rebuilt on every forward
+    /// refresh — surface profiles, gaps, paraxial focus).
+    pub layout: Signal<LayoutModel>,
     /// Selected Lens Data row (list position; `None` = none).
     pub selected: Signal<Option<usize>>,
     /// Active center workspace tab.
@@ -158,6 +162,7 @@ impl Shell {
             glass_names: Signal::new(builtin_glass_names()),
             recent: Signal::new(Vec::new()),
             surfaces: Signal::new(Vec::new()),
+            layout: Signal::new(LayoutModel::default()),
             selected: Signal::new(None),
             tab: Signal::new(WorkspaceTab::LensData),
             band: Signal::new(0),
@@ -309,8 +314,20 @@ impl Shell {
         }
     }
 
+    /// Rebuild the 2D Layout model from the working copy (pure geometry:
+    /// `SurfaceProfile::sag` curves + registry indices + paraxial BFL).
+    pub fn refresh_layout(&mut self) {
+        let surfaces = self.surfaces.peek().clone();
+        let registry = self.registry.peek().clone();
+        let lambda = self.lambda_um_or_default();
+        let imported = self.imported.peek().clone();
+        let model = layout2d::build_layout(&surfaces, &registry, lambda, imported.as_ref());
+        self.layout.set(model);
+    }
+
     /// Forward pipeline: edited surfaces → simulation beamline → PSF.
     pub fn refresh_forward(&mut self) {
+        self.refresh_layout();
         let surfaces = self.surfaces.peek().clone();
         if surfaces.len() < 3 {
             self.clear_preview();
@@ -792,6 +809,7 @@ sig_getters! {
     glass_names -> Vec<String>,
     recent -> Vec<(String, String)>,
     surfaces -> Vec<optics_zemax::ZmxSurface>,
+    layout -> LayoutModel,
     selected -> Option<usize>,
     tab -> WorkspaceTab,
     band -> usize,

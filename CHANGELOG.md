@@ -9,6 +9,16 @@ follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- 2D Layout cross-section (GEN-57 follow-up, per user reference): the
+  Lens Data Editor's live panel now renders a Zemax-style side view —
+  true conic sag surface profiles, shaded glass bodies, stop/image
+  markers, dashed paraxial-focus reference (`ParaxialReport::bfl_mm`),
+  and a scale bar — rebuilt synchronously on every element insert,
+  edit, or delete. Uses only existing public APIs; the reference's
+  traced ray fan remains out of scope pending a plan change (agents.md
+  §1). New pure module `shell/layout2d.rs` (host-tested) + SVG renderer
+  `shell/ui/layout2d.rs`.
+
 - Live system visualization while editing (GEN-57 follow-up): the Lens
   Data Editor now carries a Live layout panel — beamline strip, PSF
   thumbnail, and the sampling banner line — below the table. Element

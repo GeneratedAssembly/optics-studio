@@ -184,11 +184,21 @@ are protected. "Apply to Text" serializes the working copy through
 `ZmxSystem::to_zmx` into the authoritative `.zmx` text and re-parses, so
 a built system persists and re-imports identically (round-trip tested).
 
-**Live layout.** The Lens Data Editor tab carries a Live layout panel
-below the table: the beamline strip plus a PSF thumbnail and the sampling
-banner line. Element operations refresh the forward pipeline
-synchronously, so inserting, editing, or deleting an element redraws the
-schematic in the same tab — no tab switch needed.
+**Live 2D layout.** The Lens Data Editor tab carries a Live layout panel
+below the table: a Zemax-style 2D Layout cross-section
+(`shell/layout2d.rs` + `ui/layout2d.rs`) — each surface drawn with its
+true conic sag (`SurfaceProfile::sag`), glass bodies shaded, the stop
+surface highlighted, the image plane and a dashed paraxial-focus
+reference (`paraxial_at`) marked, plus a scale bar — alongside a PSF
+thumbnail and the sampling banner line. Element operations refresh the
+forward pipeline synchronously, so inserting, editing, or deleting an
+element redraws the view in the same tab — no tab switch needed.
+
+Scope note: the reference 2D Layout also shows colored **traced ray
+fans**. Meridional ray tracing is geometric-optics physics, out of scope
+for this suite (`agents.md` §1, §6 below); it would land in
+`optics-core` (never the UI crate) and requires a user-approved plan
+change. The cross-section viewer above uses only existing public APIs.
 
 
 ### 3.1 Application shell (10.1)

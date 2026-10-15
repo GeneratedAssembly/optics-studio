@@ -40,6 +40,16 @@ table.surf tbody tr { cursor: pointer; }
 .live-layout-row { display: flex; gap: 14px; align-items: flex-start; margin-top: 6px; }
 .psf-img.mini { width: 240px; max-width: 45%; flex: none; }
 .banner.mini { padding: 4px 8px; margin-top: 4px; }
+/* GEN-57 2D Layout (Zemax-style cross-section) */
+.layout2d-svg { width: 100%; background: #0b0e13; border-radius: 4px; }
+.l2d-glass { fill: #1b3a52; opacity: 0.55; }
+.l2d-surf { fill: none; stroke: #9fc6e8; stroke-width: 1.4; }
+.l2d-stop { stroke: #ff9d5c; stroke-width: 2.2; }
+.l2d-axis { stroke: #3a4a5e; stroke-width: 1; }
+.l2d-focus { stroke: #d9b64c; stroke-width: 1; stroke-dasharray: 5 4; opacity: 0.85; }
+.l2d-image { stroke: #7fd6a0; stroke-width: 1.6; stroke-dasharray: 2 3; }
+.l2d-bar { stroke: #9fb0c3; stroke-width: 1.4; }
+.l2d-label { fill: #7d8ea3; font-size: 9px; font-family: ui-monospace, monospace; text-anchor: middle; }
 .panel { background: #161c24; border: 1px solid #232c38; border-radius: 8px; padding: 10px 12px; }
 .panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #7d8ea3; margin: 0 0 8px; }
 button { font: inherit; }
